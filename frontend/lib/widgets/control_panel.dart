@@ -18,6 +18,8 @@ class ControlPanel extends StatefulWidget {
   final ValueChanged<String> onError;
   final VoidCallback onLoadingStart;
   final VoidCallback onLoadingEnd;
+  final bool hasRoute;
+  final VoidCallback? onShowDirections;
 
   const ControlPanel({
     super.key,
@@ -30,6 +32,8 @@ class ControlPanel extends StatefulWidget {
     required this.onError,
     required this.onLoadingStart,
     required this.onLoadingEnd,
+    this.hasRoute = false,
+    this.onShowDirections,
   });
 
   @override
@@ -331,14 +335,45 @@ class _ControlPanelState extends State<ControlPanel> {
 
             const SizedBox(height: 12),
 
-            FilledButton.icon(
-              onPressed: widget.isLoading ? null : _generate,
-              icon: widget.isLoading
-                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Icon(Icons.map),
-              label: Text(widget.isLoading ? 'Génération...' : 'Générer mon parcours', style: const TextStyle(fontSize: 15)),
-              style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-            ),
+            // Bouton Générer — ou ligne [Regénérer | Départ] si un trajet existe
+            if (!widget.hasRoute)
+              FilledButton.icon(
+                onPressed: widget.isLoading ? null : _generate,
+                icon: widget.isLoading
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.map),
+                label: Text(widget.isLoading ? 'Génération...' : 'Générer mon parcours', style: const TextStyle(fontSize: 15)),
+                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+              )
+            else
+              Row(children: [
+                // Regénérer (outlined, moins proéminent)
+                Expanded(
+                  flex: 2,
+                  child: OutlinedButton.icon(
+                    onPressed: widget.isLoading ? null : _generate,
+                    icon: widget.isLoading
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.refresh, size: 18),
+                    label: const Text('Regénérer', style: TextStyle(fontSize: 13)),
+                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                // Départ → (plein, vert vif — très visible)
+                Expanded(
+                  flex: 3,
+                  child: FilledButton.icon(
+                    onPressed: widget.onShowDirections,
+                    icon: const Icon(Icons.navigation, size: 20),
+                    label: const Text('Départ', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Colors.green[700],
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                  ),
+                ),
+              ]),
           ],
         ),
       ),
