@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:geolocator/geolocator.dart';
+import 'models/preferences.dart';
+import 'widgets/control_panel.dart';
 
-void main() {
-  runApp(const StrideApp());
-}
+void main() => runApp(const StrideApp());
 
 class StrideApp extends StatelessWidget {
   const StrideApp({super.key});
@@ -24,35 +22,6 @@ class StrideApp extends StatelessWidget {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Modèle local des préférences (miroir du backend RoutePreferences)
-// ---------------------------------------------------------------------------
-
-class RoutePreferences {
-  bool preferNature;
-  bool preferCulture;
-  bool avoidHills;
-  bool avoidTraffic;
-
-  RoutePreferences({
-    this.preferNature = false,
-    this.preferCulture = false,
-    this.avoidHills = false,
-    this.avoidTraffic = false,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'prefer_nature': preferNature,
-        'prefer_culture': preferCulture,
-        'avoid_hills': avoidHills,
-        'avoid_traffic': avoidTraffic,
-      };
-}
-
-// ---------------------------------------------------------------------------
-// Page principale
-// ---------------------------------------------------------------------------
-
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
 
@@ -61,14 +30,13 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  double _targetDistance = 5.0; // km
-  bool _isLoading = false;
   MapLibreMapController? _mapController;
   Position? _currentPosition;
   bool _locationError = false;
+  bool _isLoading = false;
 
-  // Préférences Phase 2
-  final RoutePreferences _preferences = RoutePreferences();
+  // Cercles des waypoints sur la carte (id waypoint → Circle)
+  final Map<String, Circle> _waypointCircles = {};
 
   @override
   void initState() {
@@ -77,329 +45,142 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _determinePosition() async {
-    bool serviceEnabled;
-    LocationPermission permission;
-
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
+    if (!await Geolocator.isLocationServiceEnabled()) {
       setState(() => _locationError = true);
       return;
     }
-
-    permission = await Geolocator.checkPermission();
+    var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        setState(() => _locationError = true);
-        return;
-      }
     }
-
-    if (permission == LocationPermission.deniedForever) {
+    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
       setState(() => _locationError = true);
       return;
     }
-
-    final position = await Geolocator.getCurrentPosition();
-    setState(() {
-      _currentPosition = position;
-    });
-
-    if (_mapController != null) {
-      _mapController!.animateCamera(
-        CameraUpdate.newLatLngZoom(
-          LatLng(position.latitude, position.longitude),
-          14.0,
-        ),
-      );
-    }
+    final pos = await Geolocator.getCurrentPosition();
+    setState(() => _currentPosition = pos);
+    _mapController?.animateCamera(
+      CameraUpdate.newLatLngZoom(LatLng(pos.latitude, pos.longitude), 14.0),
+    );
   }
 
   void _onMapCreated(MapLibreMapController controller) {
     _mapController = controller;
     if (_currentPosition != null) {
-      _mapController!.animateCamera(
+      controller.animateCamera(
         CameraUpdate.newLatLngZoom(
-          LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-          14.0,
+          LatLng(_currentPosition!.latitude, _currentPosition!.longitude), 14.0,
         ),
       );
     }
   }
 
-  Future<void> _generateRoute() async {
-    if (_currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Veuillez attendre la localisation GPS.')),
-      );
-      return;
-    }
-
-    setState(() {
-      _isLoading = true;
-    });
-
-    try {
-      final response = await http.post(
-        Uri.parse('http://127.0.0.1:8000/api/routes/generate'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'lat': _currentPosition!.latitude,
-          'lon': _currentPosition!.longitude,
-          'distance_km': _targetDistance,
-          'preferences': _preferences.toJson(), // Phase 2 : envoi des filtres
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-
-        if (data['status'] == 'downloading') {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(data['message']),
-                backgroundColor: Colors.blueAccent,
-                duration: const Duration(seconds: 5),
-              ),
-            );
-          }
-          return;
-        }
-
-        final distanceMeters = data['estimated_distance_m'] ?? 0;
-        final geojson = data['geojson'];
-
-        _drawRoute(geojson);
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'Itinéraire généré : ${(distanceMeters / 1000).toStringAsFixed(2)} km',
-              ),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        throw Exception('Erreur API: ${response.statusCode} - ${response.body}');
-      }
-    } catch (e) {
-      debugPrint('--- ERREUR API ---');
-      debugPrint(e.toString());
-      debugPrint('------------------');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Erreur: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
   void _drawRoute(Map<String, dynamic> geojson) async {
     if (_mapController == null) return;
-
     await _mapController!.clearLines();
-
-    final coordinates = geojson['geometry']['coordinates'] as List;
-    final List<LatLng> points = coordinates.map((coord) {
-      return LatLng(coord[1], coord[0]); // GeoJSON: [lon, lat] → LatLng: (lat, lon)
-    }).toList();
-
-    await _mapController!.addLine(
-      LineOptions(
-        geometry: points,
-        lineColor: '#4CAF50',
-        lineWidth: 6.0,
-        lineOpacity: 0.8,
-      ),
-    );
-
-    if (points.isNotEmpty) {
-      _mapController!.animateCamera(
-        CameraUpdate.newLatLng(points.first),
-      );
-    }
+    final coords = (geojson['geometry']['coordinates'] as List)
+        .map((c) => LatLng(c[1] as double, c[0] as double))
+        .toList();
+    if (coords.isEmpty) return;
+    await _mapController!.addLine(LineOptions(
+      geometry: coords,
+      lineColor: '#4CAF50',
+      lineWidth: 6.0,
+      lineOpacity: 0.85,
+    ));
+    _mapController!.animateCamera(CameraUpdate.newLatLng(coords.first));
   }
 
-  // ---------------------------------------------------------------------------
-  // Widgets
-  // ---------------------------------------------------------------------------
+  Future<void> _addWaypointMarker(WaypointModel wp) async {
+    if (_mapController == null) return;
+    final circle = await _mapController!.addCircle(CircleOptions(
+      geometry: LatLng(wp.lat, wp.lon),
+      circleColor: '#FF5722',
+      circleRadius: 9.0,
+      circleStrokeWidth: 2.5,
+      circleStrokeColor: '#FFFFFF',
+    ));
+    _waypointCircles[wp.id] = circle;
+  }
 
-  /// Bouton de filtre toggle avec icône et label.
-  Widget _buildFilterChip({
-    required String label,
-    required IconData icon,
-    required bool value,
-    required ValueChanged<bool> onChanged,
-  }) {
-    return FilterChip(
-      label: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: value ? Colors.white : Colors.grey[700]),
-          const SizedBox(width: 4),
-          Text(label),
-        ],
-      ),
-      selected: value,
-      onSelected: onChanged,
-      selectedColor: Theme.of(context).colorScheme.primary,
-      labelStyle: TextStyle(
-        color: value ? Colors.white : Colors.grey[800],
-        fontSize: 12,
-      ),
-      showCheckmark: false,
-    );
+  Future<void> _removeWaypointMarker(String wpId) async {
+    final circle = _waypointCircles.remove(wpId);
+    if (circle != null) await _mapController?.removeCircle(circle);
+  }
+
+  void _onRouteGenerated(Map<String, dynamic> data) {
+    if (data['status'] == 'downloading') {
+      _showSnackBar(data['message'] as String, color: Colors.blueAccent, duration: 5);
+      return;
+    }
+    final geojson = data['geojson'];
+    if (geojson != null) _drawRoute(geojson as Map<String, dynamic>);
+    final km = ((data['estimated_distance_m'] ?? 0) / 1000).toStringAsFixed(2);
+    _showSnackBar('Itinéraire généré : $km km', color: Colors.green);
+  }
+
+  void _showSnackBar(String msg, {Color color = Colors.red, int duration = 3}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      backgroundColor: color,
+      duration: Duration(seconds: duration),
+    ));
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Stride - Balades sur-mesure'),
+        title: const Text('Stride'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
       ),
       body: Stack(
         children: [
-          // --- Carte MapLibre en arrière-plan ---
+          // Carte plein écran
           Positioned.fill(
             child: MapLibreMap(
               onMapCreated: _onMapCreated,
               styleString: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-              // Monde dézoomé : on attend la localisation GPS avant de zoomer
-              initialCameraPosition: const CameraPosition(
-                target: LatLng(20.0, 0.0),
-                zoom: 2.0,
-              ),
+              // Monde dézoomé : zoom automatique dès que le GPS répond
+              initialCameraPosition: const CameraPosition(target: LatLng(20.0, 0.0), zoom: 2.0),
               myLocationEnabled: true,
               myLocationTrackingMode: MyLocationTrackingMode.tracking,
               compassEnabled: true,
             ),
           ),
 
-          // --- Panneau de contrôle en bas ---
-          Positioned(
-            bottom: 20,
-            left: 20,
-            right: 20,
-            child: Card(
-              elevation: 8,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // Avertissement GPS
-                    if (_locationError)
-                      const Text(
-                        'Erreur GPS. Impossible de vous localiser.',
-                        style: TextStyle(color: Colors.red),
-                      ),
-
-                    // Curseur distance
-                    Text(
-                      'Distance souhaitée : ${_targetDistance.toStringAsFixed(1)} km',
-                      style: Theme.of(context).textTheme.titleMedium,
-                    ),
-                    Slider(
-                      value: _targetDistance,
-                      min: 1.0,
-                      max: 20.0,
-                      divisions: 38,
-                      label: '${_targetDistance.toStringAsFixed(1)} km',
-                      onChanged: (value) {
-                        setState(() {
-                          _targetDistance = value;
-                        });
-                      },
-                    ),
-
-                    const SizedBox(height: 4),
-
-                    // --- Filtres Phase 2 ---
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        'Préférences',
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                              color: Colors.grey[600],
-                            ),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        _buildFilterChip(
-                          label: 'Nature',
-                          icon: Icons.park,
-                          value: _preferences.preferNature,
-                          onChanged: (v) => setState(() => _preferences.preferNature = v),
-                        ),
-                        _buildFilterChip(
-                          label: 'Culture',
-                          icon: Icons.museum,
-                          value: _preferences.preferCulture,
-                          onChanged: (v) => setState(() => _preferences.preferCulture = v),
-                        ),
-                        _buildFilterChip(
-                          label: 'Plat',
-                          icon: Icons.terrain,
-                          value: _preferences.avoidHills,
-                          onChanged: (v) => setState(() => _preferences.avoidHills = v),
-                        ),
-                        _buildFilterChip(
-                          label: 'Calme',
-                          icon: Icons.volume_off,
-                          value: _preferences.avoidTraffic,
-                          onChanged: (v) => setState(() => _preferences.avoidTraffic = v),
-                        ),
-                      ],
-                    ),
-
-                    const SizedBox(height: 12),
-
-                    // Bouton de génération
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _isLoading ? null : _generateRoute,
-                        icon: _isLoading
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.map),
-                        label: Text(
-                          _isLoading ? 'Génération...' : 'Générer mon parcours',
-                        ),
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 24,
-                            vertical: 12,
-                          ),
-                          textStyle: const TextStyle(fontSize: 16),
-                        ),
-                      ),
-                    ),
-                  ],
+          // Bannière erreur GPS
+          if (_locationError)
+            Positioned(
+              top: 12, left: 16, right: 16,
+              child: Material(
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.red.shade100,
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(children: [
+                    Icon(Icons.location_off, color: Colors.red),
+                    SizedBox(width: 8),
+                    Expanded(child: Text('GPS non disponible. La génération se fera depuis le centre de la carte.')),
+                  ]),
                 ),
+              ),
+            ),
+
+          // Panneau de contrôle en bas
+          Positioned(
+            bottom: 20, left: 16, right: 16,
+            child: SingleChildScrollView(
+              child: ControlPanel(
+                currentPosition: _currentPosition,
+                isLoading: _isLoading,
+                onRouteGenerated: _onRouteGenerated,
+                onWaypointMarkerAdded: _addWaypointMarker,
+                onWaypointMarkerRemoved: _removeWaypointMarker,
+                onError: (msg) => _showSnackBar(msg),
+                onLoadingStart: () => setState(() => _isLoading = true),
+                onLoadingEnd: () => setState(() => _isLoading = false),
               ),
             ),
           ),
