@@ -2,12 +2,9 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import '../models/preferences.dart';
 
-/// Appelle le backend Stride pour générer un itinéraire.
 class ApiService {
   static const String _baseUrl = 'http://127.0.0.1:8000';
 
-  /// Génère un itinéraire circulaire selon les paramètres fournis.
-  /// Lance une [Exception] si la réponse n'est pas 200.
   static Future<Map<String, dynamic>> generateRoute({
     required double lat,
     required double lon,
@@ -34,6 +31,8 @@ class ApiService {
         body['distance_km'] = value;
       case DistanceUnit.time:
         body['time_minutes'] = value;
+        // On envoie la vitesse de marche pour que le backend calcule la bonne distance
+        body['walking_speed_kmh'] = userProfile.walkingSpeedKmh;
     }
 
     final response = await http.post(

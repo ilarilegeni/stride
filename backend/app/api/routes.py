@@ -28,7 +28,13 @@ def generate_route(request: RouteRequest, background_tasks: BackgroundTasks):
     elif request.distance_km:
         target_distance_m = request.distance_km * 1000
     elif request.time_minutes:
-        target_distance_m = request.time_minutes * settings.WALKING_SPEED_M_PER_MIN
+        # Utilise la vitesse fournie par le profil utilisateur, sinon la valeur par défaut
+        speed_m_per_min = (
+            (request.walking_speed_kmh * 1000 / 60)
+            if request.walking_speed_kmh
+            else settings.WALKING_SPEED_M_PER_MIN
+        )
+        target_distance_m = request.time_minutes * speed_m_per_min
     else:
         raise HTTPException(
             status_code=400,

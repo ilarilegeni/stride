@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:geolocator/geolocator.dart';
+import 'dart:math' show Point;
 import 'models/preferences.dart';
+import 'services/geocoding_service.dart';
 import 'widgets/control_panel.dart';
 
 void main() => runApp(const StrideApp());
@@ -35,8 +37,13 @@ class _HomePageState extends State<HomePage> {
   bool _locationError = false;
   bool _isLoading = false;
 
-  // Cercles des waypoints sur la carte (id waypoint → Circle)
+  // Waypoints : état remonté ici pour que la carte ET le panneau y accèdent
+  final List<WaypointModel> _waypoints = [];
   final Map<String, Circle> _waypointCircles = {};
+
+  // Mode "ajouter un waypoint par clic sur la carte"
+  bool _isAddingWaypointMode = false;
+  bool _isReverseGeocoding = false;
 
   @override
   void initState() {
@@ -49,11 +56,9 @@ class _HomePageState extends State<HomePage> {
       setState(() => _locationError = true);
       return;
     }
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied || permission == LocationPermission.deniedForever) {
+    var perm = await Geolocator.checkPermission();
+    if (perm == LocationPermission.denied) perm = await Geolocator.requestPermission();
+    if (perm == LocationPermission.denied || perm == LocationPermission.deniedForever) {
       setState(() => _locationError = true);
       return;
     }
@@ -75,6 +80,38 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// Gère le clic sur la carte.
+  Future<void> _onMapClick(Point<double> point, LatLng coords) async {
+    if (!_isAddingWaypointMode) return;
+    setState(() => _isReverseGeocoding = true);
+    try {
+      final name = await GeocodingService.reverseGeocode(coords.latitude, coords.longitude);
+      final wp = WaypointModel(lat: coords.latitude, lon: coords.longitude, name: name);
+      await _addWaypoint(wp);
+    } finally {
+      if (mounted) setState(() { _isReverseGeocoding = false; _isAddingWaypointMode = false; });
+    }
+  }
+
+  Future<void> _addWaypoint(WaypointModel wp) async {
+    setState(() => _waypoints.add(wp));
+    if (_mapController == null) return;
+    final circle = await _mapController!.addCircle(CircleOptions(
+      geometry: LatLng(wp.lat, wp.lon),
+      circleColor: '#FF5722',
+      circleRadius: 9.0,
+      circleStrokeWidth: 2.5,
+      circleStrokeColor: '#FFFFFF',
+    ));
+    _waypointCircles[wp.id] = circle;
+  }
+
+  Future<void> _removeWaypoint(String wpId) async {
+    setState(() => _waypoints.removeWhere((w) => w.id == wpId));
+    final circle = _waypointCircles.remove(wpId);
+    if (circle != null) await _mapController?.removeCircle(circle);
+  }
+
   void _drawRoute(Map<String, dynamic> geojson) async {
     if (_mapController == null) return;
     await _mapController!.clearLines();
@@ -89,23 +126,6 @@ class _HomePageState extends State<HomePage> {
       lineOpacity: 0.85,
     ));
     _mapController!.animateCamera(CameraUpdate.newLatLng(coords.first));
-  }
-
-  Future<void> _addWaypointMarker(WaypointModel wp) async {
-    if (_mapController == null) return;
-    final circle = await _mapController!.addCircle(CircleOptions(
-      geometry: LatLng(wp.lat, wp.lon),
-      circleColor: '#FF5722',
-      circleRadius: 9.0,
-      circleStrokeWidth: 2.5,
-      circleStrokeColor: '#FFFFFF',
-    ));
-    _waypointCircles[wp.id] = circle;
-  }
-
-  Future<void> _removeWaypointMarker(String wpId) async {
-    final circle = _waypointCircles.remove(wpId);
-    if (circle != null) await _mapController?.removeCircle(circle);
   }
 
   void _onRouteGenerated(Map<String, dynamic> data) {
@@ -137,12 +157,12 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Stack(
         children: [
-          // Carte plein écran
+          // --- Carte plein écran ---
           Positioned.fill(
             child: MapLibreMap(
               onMapCreated: _onMapCreated,
+              onMapClick: _onMapClick,
               styleString: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
-              // Monde dézoomé : zoom automatique dès que le GPS répond
               initialCameraPosition: const CameraPosition(target: LatLng(20.0, 0.0), zoom: 2.0),
               myLocationEnabled: true,
               myLocationTrackingMode: MyLocationTrackingMode.tracking,
@@ -150,7 +170,7 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
 
-          // Bannière erreur GPS
+          // --- Bannière erreur GPS ---
           if (_locationError)
             Positioned(
               top: 12, left: 16, right: 16,
@@ -162,22 +182,67 @@ class _HomePageState extends State<HomePage> {
                   child: Row(children: [
                     Icon(Icons.location_off, color: Colors.red),
                     SizedBox(width: 8),
-                    Expanded(child: Text('GPS non disponible. La génération se fera depuis le centre de la carte.')),
+                    Expanded(child: Text('GPS non disponible.')),
                   ]),
                 ),
               ),
             ),
 
-          // Panneau de contrôle en bas
+          // --- Bannière mode ajout waypoint ---
+          if (_isAddingWaypointMode)
+            Positioned(
+              top: _locationError ? 70 : 12, left: 16, right: 16,
+              child: Material(
+                borderRadius: BorderRadius.circular(12),
+                color: Colors.orange.shade50,
+                elevation: 4,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  child: Row(children: [
+                    if (_isReverseGeocoding)
+                      const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    else
+                      const Icon(Icons.touch_app, color: Colors.orange),
+                    const SizedBox(width: 10),
+                    Expanded(child: Text(
+                      _isReverseGeocoding ? 'Identification du lieu...' : 'Appuyez sur la carte pour ajouter un point',
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                    )),
+                    TextButton(
+                      onPressed: () => setState(() => _isAddingWaypointMode = false),
+                      child: const Text('Annuler'),
+                    ),
+                  ]),
+                ),
+              ),
+            ),
+
+          // --- Bouton flottant : activer/désactiver le mode tap ---
+          Positioned(
+            top: 12, right: 12,
+            child: FloatingActionButton.small(
+              heroTag: 'add_waypoint',
+              tooltip: 'Ajouter un point sur la carte',
+              backgroundColor: _isAddingWaypointMode ? Colors.orange : Colors.white,
+              onPressed: () => setState(() => _isAddingWaypointMode = !_isAddingWaypointMode),
+              child: Icon(
+                Icons.add_location_alt,
+                color: _isAddingWaypointMode ? Colors.white : Colors.grey[700],
+              ),
+            ),
+          ),
+
+          // --- Panneau de contrôle en bas ---
           Positioned(
             bottom: 20, left: 16, right: 16,
             child: SingleChildScrollView(
               child: ControlPanel(
                 currentPosition: _currentPosition,
                 isLoading: _isLoading,
+                waypoints: _waypoints,
+                onWaypointAdded: _addWaypoint,
+                onWaypointRemoved: _removeWaypoint,
                 onRouteGenerated: _onRouteGenerated,
-                onWaypointMarkerAdded: _addWaypointMarker,
-                onWaypointMarkerRemoved: _removeWaypointMarker,
                 onError: (msg) => _showSnackBar(msg),
                 onLoadingStart: () => setState(() => _isLoading = true),
                 onLoadingEnd: () => setState(() => _isLoading = false),

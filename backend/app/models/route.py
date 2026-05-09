@@ -20,13 +20,14 @@ class RouteRequest(BaseModel):
     lat: float = Field(..., description="Latitude de départ")
     lon: float = Field(..., description="Longitude de départ")
 
-    # --- Modes de saisie de la distance cible (un seul requis) ---
+    # Modes de saisie de la distance cible (un seul requis)
     steps: Optional[int] = Field(default=None, description="Nombre de pas souhaités")
     distance_km: Optional[float] = Field(default=None, description="Distance souhaitée en km")
-    time_minutes: Optional[float] = Field(default=None, description="Durée de marche souhaitée en minutes")
+    time_minutes: Optional[float] = Field(default=None, description="Durée de marche en minutes")
 
-    # Longueur d'un pas en mètres (calculée depuis la taille ou saisie manuellement)
+    # Paramètres de calibration utilisateur
     step_length_m: Optional[float] = Field(default=None, description="Longueur d'un pas en mètres")
+    walking_speed_kmh: Optional[float] = Field(default=None, description="Vitesse de marche en km/h (pour le mode temps)")
 
     # Points de passage explicites
     waypoints: List[Waypoint] = Field(default_factory=list, description="Lieux à inclure dans l'itinéraire")

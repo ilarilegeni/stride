@@ -6,13 +6,15 @@ import '../services/api_service.dart';
 import 'waypoint_search.dart';
 
 /// Panneau de contrôle bas de l'écran.
-/// Gère : unité de mesure, points de passage, filtres, et déclenchement de la génération.
+/// Les [waypoints] et leurs callbacks sont gérés par le parent (HomePage)
+/// pour que les taps sur la carte puissent aussi en ajouter.
 class ControlPanel extends StatefulWidget {
   final Position? currentPosition;
   final bool isLoading;
+  final List<WaypointModel> waypoints;
+  final ValueChanged<WaypointModel> onWaypointAdded;
+  final ValueChanged<String> onWaypointRemoved;
   final ValueChanged<Map<String, dynamic>> onRouteGenerated;
-  final ValueChanged<WaypointModel> onWaypointMarkerAdded;
-  final ValueChanged<String> onWaypointMarkerRemoved;
   final ValueChanged<String> onError;
   final VoidCallback onLoadingStart;
   final VoidCallback onLoadingEnd;
@@ -21,9 +23,10 @@ class ControlPanel extends StatefulWidget {
     super.key,
     required this.currentPosition,
     required this.isLoading,
+    required this.waypoints,
+    required this.onWaypointAdded,
+    required this.onWaypointRemoved,
     required this.onRouteGenerated,
-    required this.onWaypointMarkerAdded,
-    required this.onWaypointMarkerRemoved,
     required this.onError,
     required this.onLoadingStart,
     required this.onLoadingEnd,
@@ -35,12 +38,10 @@ class ControlPanel extends StatefulWidget {
 
 class _ControlPanelState extends State<ControlPanel> {
   DistanceUnit _unit = DistanceUnit.kilometers;
-  double _value = 5.0; // km par défaut
+  double _value = 5.0;
   final _preferences = RoutePreferences();
-  final _userProfile = UserProfile();
-  final List<WaypointModel> _waypoints = [];
+  final _profile = UserProfile();
 
-  // Plages selon l'unité
   double get _min => switch (_unit) {
         DistanceUnit.steps => 1000,
         DistanceUnit.kilometers => 1.0,
@@ -62,83 +63,126 @@ class _ControlPanelState extends State<ControlPanel> {
         DistanceUnit.time => '${_value.round()} min',
       };
 
-  void _changeUnit(DistanceUnit unit) {
-    setState(() {
-      _unit = unit;
-      _value = switch (unit) {
-        DistanceUnit.steps => 6500,
-        DistanceUnit.kilometers => 5.0,
-        DistanceUnit.time => 45.0,
-      };
-    });
-  }
+  void _changeUnit(DistanceUnit unit) => setState(() {
+        _unit = unit;
+        _value = switch (unit) {
+          DistanceUnit.steps => 6500,
+          DistanceUnit.kilometers => 5.0,
+          DistanceUnit.time => 45.0,
+        };
+      });
 
-  void _addWaypoint(WaypointModel wp) {
-    setState(() => _waypoints.add(wp));
-    widget.onWaypointMarkerAdded(wp);
-  }
-
-  void _removeWaypoint(WaypointModel wp) {
-    setState(() => _waypoints.removeWhere((w) => w.id == wp.id));
-    widget.onWaypointMarkerRemoved(wp.id);
-  }
-
-  Future<void> _showCalibrationDialog() async {
-    final heightController = TextEditingController(
-      text: _userProfile.heightCm?.toStringAsFixed(0) ?? '',
-    );
-    final stepController = TextEditingController(
-      text: _userProfile.customStepLengthM?.toStringAsFixed(2) ?? '',
-    );
+  Future<void> _showProfileDialog() async {
+    // Contrôleurs pré-remplis depuis le profil existant
+    final heightCtrl = TextEditingController(text: _profile.heightCm?.toStringAsFixed(0) ?? '');
+    final ageCtrl = TextEditingController(text: _profile.ageYears?.toString() ?? '');
+    final stepCtrl = TextEditingController(text: _profile.customStepLengthM?.toStringAsFixed(2) ?? '');
+    final speedCtrl = TextEditingController(text: _profile.customSpeedKmh?.toStringAsFixed(1) ?? '');
 
     await showDialog<void>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Calibrer mes pas'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: heightController,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                  labelText: 'Ma taille (cm)',
-                  suffixText: 'cm',
-                  border: OutlineInputBorder(),
+        builder: (ctx, setDs) {
+          // Mise à jour live des estimations
+          void rebuild() => setDs(() {});
+
+          return AlertDialog(
+            title: const Row(children: [
+              Icon(Icons.person, size: 22),
+              SizedBox(width: 8),
+              Text('Mon profil de marche'),
+            ]),
+            content: SingleChildScrollView(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Informations physiques', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                 ),
-                onChanged: (v) {
-                  final h = double.tryParse(v);
-                  setDialogState(() => _userProfile.heightCm = h);
-                },
-              ),
-              const SizedBox(height: 8),
-              if (_userProfile.heightCm != null)
-                Text('→ Longueur estimée : ${_userProfile.stepLengthDisplay}',
-                    style: const TextStyle(color: Colors.green, fontSize: 13)),
-              const Divider(height: 24),
-              TextField(
-                controller: stepController,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'Personnaliser (m/pas)',
-                  suffixText: 'm',
-                  border: OutlineInputBorder(),
-                  helperText: 'Laissez vide pour calculer depuis la taille',
+                const SizedBox(height: 8),
+                // Taille
+                _dialogField(heightCtrl, 'Taille', 'cm', TextInputType.number, digitsOnly: true, onChanged: (v) {
+                  _profile.heightCm = double.tryParse(v);
+                  rebuild();
+                }),
+                const SizedBox(height: 8),
+                // Âge
+                _dialogField(ageCtrl, 'Âge', 'ans', TextInputType.number, digitsOnly: true, onChanged: (v) {
+                  _profile.ageYears = int.tryParse(v);
+                  rebuild();
+                }),
+                const SizedBox(height: 12),
+                // Résumé estimations
+                if (_profile.heightCm != null || _profile.ageYears != null)
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade50,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: Colors.green.shade200),
+                    ),
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text('✦ Estimations calculées', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 12, color: Colors.green)),
+                      const SizedBox(height: 4),
+                      if (_profile.heightCm != null)
+                        Text('👣  Longueur de pas : ${_profile.stepLengthDisplay}', style: const TextStyle(fontSize: 12)),
+                      if (_profile.ageYears != null && _profile.customSpeedKmh == null)
+                        Text('⚡  Vitesse de marche : ${_profile.speedDisplay}', style: const TextStyle(fontSize: 12)),
+                    ]),
+                  ),
+                const SizedBox(height: 12),
+                const Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('Ou personnaliser directement', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
                 ),
-                onChanged: (v) => _userProfile.customStepLengthM = double.tryParse(v),
+                const SizedBox(height: 8),
+                // Longueur de pas custom
+                _dialogField(stepCtrl, 'Longueur d\'un pas', 'm', const TextInputType.numberWithOptions(decimal: true),
+                    helperText: 'Laissez vide pour calculer depuis la taille', onChanged: (v) {
+                  _profile.customStepLengthM = double.tryParse(v);
+                  rebuild();
+                }),
+                const SizedBox(height: 8),
+                // Vitesse custom
+                _dialogField(speedCtrl, 'Vitesse de marche', 'km/h', const TextInputType.numberWithOptions(decimal: true),
+                    helperText: 'Laissez vide pour calculer depuis l\'âge', onChanged: (v) {
+                  _profile.customSpeedKmh = double.tryParse(v);
+                  rebuild();
+                }),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+              FilledButton(
+                onPressed: () { setState(() {}); Navigator.pop(ctx); },
+                child: const Text('Enregistrer'),
               ),
             ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
-            FilledButton(
-              onPressed: () { setState(() {}); Navigator.pop(ctx); },
-              child: const Text('Confirmer'),
-            ),
-          ],
-        ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _dialogField(
+    TextEditingController ctrl,
+    String label,
+    String suffix,
+    TextInputType keyboardType, {
+    bool digitsOnly = false,
+    String? helperText,
+    required ValueChanged<String> onChanged,
+  }) {
+    return TextField(
+      controller: ctrl,
+      keyboardType: keyboardType,
+      inputFormatters: digitsOnly ? [FilteringTextInputFormatter.digitsOnly] : null,
+      onChanged: onChanged,
+      decoration: InputDecoration(
+        labelText: label,
+        suffixText: suffix,
+        helperText: helperText,
+        border: const OutlineInputBorder(),
+        isDense: true,
       ),
     );
   }
@@ -155,9 +199,9 @@ class _ControlPanelState extends State<ControlPanel> {
         lon: widget.currentPosition!.longitude,
         unit: _unit,
         value: _value,
-        userProfile: _userProfile,
+        userProfile: _profile,
         preferences: _preferences,
-        waypoints: _waypoints,
+        waypoints: widget.waypoints,
       );
       widget.onRouteGenerated(data);
     } catch (e) {
@@ -186,6 +230,7 @@ class _ControlPanelState extends State<ControlPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.primary;
     return Card(
       elevation: 10,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -197,21 +242,22 @@ class _ControlPanelState extends State<ControlPanel> {
           children: [
             // --- Points de passage ---
             Row(children: [
-              Icon(Icons.route, size: 16, color: Theme.of(context).colorScheme.primary),
+              Icon(Icons.route, size: 16, color: color),
               const SizedBox(width: 6),
               Text('Points de passage', style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700)),
+              const Spacer(),
+              Text('ou appuyez sur la carte 📍', style: TextStyle(fontSize: 11, color: Colors.grey[500])),
             ]),
             const SizedBox(height: 6),
-            WaypointSearch(onWaypointSelected: _addWaypoint),
-            if (_waypoints.isNotEmpty) ...[
+            WaypointSearch(onWaypointSelected: widget.onWaypointAdded),
+            if (widget.waypoints.isNotEmpty) ...[
               const SizedBox(height: 6),
               Wrap(
-                spacing: 6,
-                runSpacing: 4,
-                children: _waypoints.map((wp) => Chip(
+                spacing: 6, runSpacing: 4,
+                children: widget.waypoints.map((wp) => Chip(
                   label: Text(wp.name, style: const TextStyle(fontSize: 12)),
                   deleteIcon: const Icon(Icons.close, size: 14),
-                  onDeleted: () => _removeWaypoint(wp),
+                  onDeleted: () => widget.onWaypointRemoved(wp.id),
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   padding: const EdgeInsets.symmetric(horizontal: 4),
                 )).toList(),
@@ -222,7 +268,7 @@ class _ControlPanelState extends State<ControlPanel> {
 
             // --- Sélecteur d'unité ---
             Row(children: [
-              Icon(Icons.straighten, size: 16, color: Theme.of(context).colorScheme.primary),
+              Icon(Icons.straighten, size: 16, color: color),
               const SizedBox(width: 6),
               Text('Distance cible', style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700)),
             ]),
@@ -247,14 +293,22 @@ class _ControlPanelState extends State<ControlPanel> {
               )),
               Text(_label, style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600)),
             ]),
-            if (_unit == DistanceUnit.steps)
+            if (_unit == DistanceUnit.steps || _unit == DistanceUnit.time)
               Align(
                 alignment: Alignment.centerLeft,
                 child: TextButton.icon(
-                  onPressed: _showCalibrationDialog,
-                  icon: const Icon(Icons.tune, size: 14),
-                  label: Text('Calibrer (${_userProfile.stepLengthDisplay})', style: const TextStyle(fontSize: 12)),
-                  style: TextButton.styleFrom(padding: EdgeInsets.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                  onPressed: _showProfileDialog,
+                  icon: const Icon(Icons.person_outline, size: 14),
+                  label: Text(
+                    _profile.summary == 'Non configuré'
+                        ? 'Configurer mon profil de marche'
+                        : 'Profil : ${_profile.summary}',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                 ),
               ),
 
@@ -262,7 +316,7 @@ class _ControlPanelState extends State<ControlPanel> {
 
             // --- Filtres ---
             Row(children: [
-              Icon(Icons.tune, size: 16, color: Theme.of(context).colorScheme.primary),
+              Icon(Icons.tune, size: 16, color: color),
               const SizedBox(width: 6),
               Text('Ambiance', style: Theme.of(context).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700)),
             ]),
@@ -276,7 +330,6 @@ class _ControlPanelState extends State<ControlPanel> {
 
             const SizedBox(height: 12),
 
-            // --- Bouton générer ---
             FilledButton.icon(
               onPressed: widget.isLoading ? null : _generate,
               icon: widget.isLoading
