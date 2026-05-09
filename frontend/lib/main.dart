@@ -277,9 +277,10 @@ class _HomePageState extends State<HomePage> {
             child: MapLibreMap(
               onMapCreated: _onMapCreated,
               styleString: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
+              // Monde dézoomé : on attend la localisation GPS avant de zoomer
               initialCameraPosition: const CameraPosition(
-                target: LatLng(48.8566, 2.3522), // Paris par défaut
-                zoom: 11.0,
+                target: LatLng(20.0, 0.0),
+                zoom: 2.0,
               ),
               myLocationEnabled: true,
               myLocationTrackingMode: MyLocationTrackingMode.tracking,
