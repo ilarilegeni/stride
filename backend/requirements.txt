@@ -1,4 +1,9 @@
-fastapi==0.103.1
-uvicorn==0.23.2
-pydantic==2.3.0
-requests==2.31.0
+fastapi>=0.103.1
+uvicorn>=0.23.2
+# pydantic 2.3.0 ne compile pas sur Python 3.14 (pydantic-core/Rust).
+# Sur Python 3.11 (Docker), les versions exactes fonctionnent.
+# En dev local sur Python 3.14+, laisser pip choisir une version récente.
+pydantic>=2.3.0
+requests>=2.31.0
+pytest>=7.4.3
+httpx>=0.25.2
