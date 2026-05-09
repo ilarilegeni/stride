@@ -326,6 +326,7 @@ class _ControlPanelState extends State<ControlPanel> {
               _filterChip('Culture', Icons.museum, _preferences.preferCulture, (v) => setState(() => _preferences.preferCulture = v)),
               _filterChip('Plat', Icons.terrain, _preferences.avoidHills, (v) => setState(() => _preferences.avoidHills = v)),
               _filterChip('Calme', Icons.volume_off, _preferences.avoidTraffic, (v) => setState(() => _preferences.avoidTraffic = v)),
+              _filterChip('Éviter privés', Icons.lock_outline, _preferences.avoidPrivate, (v) => setState(() => _preferences.avoidPrivate = v)),
             ]),
 
             const SizedBox(height: 12),

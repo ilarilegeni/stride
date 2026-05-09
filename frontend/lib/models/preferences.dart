@@ -78,12 +78,14 @@ class RoutePreferences {
   bool preferCulture;
   bool avoidHills;
   bool avoidTraffic;
+  bool avoidPrivate;
 
   RoutePreferences({
     this.preferNature = false,
     this.preferCulture = false,
     this.avoidHills = false,
     this.avoidTraffic = false,
+    this.avoidPrivate = false,
   });
 
   Map<String, dynamic> toJson() => {
@@ -91,5 +93,6 @@ class RoutePreferences {
         'prefer_culture': preferCulture,
         'avoid_hills': avoidHills,
         'avoid_traffic': avoidTraffic,
+        'avoid_private': avoidPrivate,
       };
 }

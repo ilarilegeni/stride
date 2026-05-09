@@ -14,6 +14,7 @@ class RoutePreferences(BaseModel):
     prefer_culture: bool = Field(default=False, description="Passer près de monuments et POI culturels")
     avoid_hills: bool = Field(default=False, description="Éviter les pentes fortes (> 5%)")
     avoid_traffic: bool = Field(default=False, description="Éviter les rues passantes aux heures de pointe")
+    avoid_private: bool = Field(default=False, description="Éviter les chemins privés, pistes non balisées et voies de service")
 
 
 class RouteRequest(BaseModel):

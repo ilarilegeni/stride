@@ -5,6 +5,7 @@ import 'dart:math' show Point;
 import 'models/preferences.dart';
 import 'services/geocoding_service.dart';
 import 'widgets/control_panel.dart';
+import 'widgets/directions_panel.dart';
 
 void main() => runApp(const StrideApp());
 
@@ -36,6 +37,11 @@ class _HomePageState extends State<HomePage> {
   Position? _currentPosition;
   bool _locationError = false;
   bool _isLoading = false;
+
+  // Route courante
+  List<dynamic> _maneuvers = [];
+  double _routeDistanceM = 0;
+  int _routeTimeS = 0;
 
   final List<WaypointModel> _waypoints = [];
   final Map<String, Circle> _waypointCircles = {};
@@ -144,7 +150,12 @@ class _HomePageState extends State<HomePage> {
     }
     final geojson = data['geojson'];
     if (geojson != null) _drawRoute(geojson as Map<String, dynamic>);
-    final km = ((data['estimated_distance_m'] ?? 0) / 1000).toStringAsFixed(2);
+    setState(() {
+      _routeDistanceM = (data['estimated_distance_m'] ?? 0).toDouble();
+      _routeTimeS = (data['estimated_time_s'] ?? 0) as int;
+      _maneuvers = (data['maneuvers'] as List<dynamic>?) ?? [];
+    });
+    final km = (_routeDistanceM / 1000).toStringAsFixed(2);
     _showSnackBar('Itinéraire généré : $km km', color: Colors.green);
   }
 
@@ -240,21 +251,43 @@ class _HomePageState extends State<HomePage> {
             ),
 
           // ── 4. FAB pour activer/désactiver le mode tap ────────────────
-          // Positionné APRÈS l'overlay dans le Stack → il est au-dessus
-          // et absorbe son propre tap sans le transmettre à l'overlay.
           Positioned(
             top: 12, right: 12,
-            child: FloatingActionButton.small(
-              heroTag: 'add_waypoint_fab',
-              tooltip: _isAddingWaypointMode ? 'Annuler' : 'Placer un point sur la carte',
-              backgroundColor: _isAddingWaypointMode ? Colors.orange : Colors.white,
-              elevation: 4,
-              onPressed: () => setState(() => _isAddingWaypointMode = !_isAddingWaypointMode),
-              child: Icon(
-                _isAddingWaypointMode ? Icons.close : Icons.add_location_alt,
-                color: _isAddingWaypointMode ? Colors.white : Colors.grey[700],
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              FloatingActionButton.small(
+                heroTag: 'add_waypoint_fab',
+                tooltip: _isAddingWaypointMode ? 'Annuler' : 'Placer un point sur la carte',
+                backgroundColor: _isAddingWaypointMode ? Colors.orange : Colors.white,
+                elevation: 4,
+                onPressed: () => setState(() => _isAddingWaypointMode = !_isAddingWaypointMode),
+                child: Icon(
+                  _isAddingWaypointMode ? Icons.close : Icons.add_location_alt,
+                  color: _isAddingWaypointMode ? Colors.white : Colors.grey[700],
+                ),
               ),
-            ),
+              if (_maneuvers.isNotEmpty) ...[const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'directions_fab',
+                  tooltip: 'Voir les directions',
+                  backgroundColor: Colors.white,
+                  elevation: 4,
+                  onPressed: () => showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    backgroundColor: Colors.transparent,
+                    builder: (_) => DirectionsPanel(
+                      maneuvers: _maneuvers,
+                      distanceM: _routeDistanceM,
+                      timeS: _routeTimeS,
+                      startLat: _currentPosition?.latitude,
+                      startLon: _currentPosition?.longitude,
+                      waypoints: _waypoints,
+                    ),
+                  ),
+                  child: const Icon(Icons.turn_right_alt, color: Colors.green),
+                ),
+              ],
+            ]),
           ),
 
           // ── 5. Panneau de contrôle en bas ────────────────────────────
