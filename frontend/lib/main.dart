@@ -37,11 +37,9 @@ class _HomePageState extends State<HomePage> {
   bool _locationError = false;
   bool _isLoading = false;
 
-  // Waypoints : état remonté ici pour que la carte ET le panneau y accèdent
   final List<WaypointModel> _waypoints = [];
   final Map<String, Circle> _waypointCircles = {};
 
-  // Mode "ajouter un waypoint par clic sur la carte"
   bool _isAddingWaypointMode = false;
   bool _isReverseGeocoding = false;
 
@@ -80,16 +78,27 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
-  /// Gère le clic sur la carte.
-  Future<void> _onMapClick(Point<double> point, LatLng coords) async {
-    if (!_isAddingWaypointMode) return;
-    setState(() => _isReverseGeocoding = true);
+  /// Gère le tap sur le GestureDetector transparent posé sur la carte.
+  /// N'est actif que quand [_isAddingWaypointMode] est vrai.
+  Future<void> _handleMapTap(TapUpDetails details) async {
+    if (_mapController == null) return;
+
+    // Désactive immédiatement le mode pour éviter les double-taps
+    setState(() {
+      _isAddingWaypointMode = false;
+      _isReverseGeocoding = true;
+    });
+
     try {
-      final name = await GeocodingService.reverseGeocode(coords.latitude, coords.longitude);
-      final wp = WaypointModel(lat: coords.latitude, lon: coords.longitude, name: name);
-      await _addWaypoint(wp);
+      // Convertit les coordonnées écran → LatLng via le controller MapLibre
+      final pos = details.localPosition;
+      final latLng = await _mapController!.toLatLng(Point(pos.dx, pos.dy));
+
+      // Reverse geocoding pour obtenir un nom de lieu lisible
+      final name = await GeocodingService.reverseGeocode(latLng.latitude, latLng.longitude);
+      await _addWaypoint(WaypointModel(lat: latLng.latitude, lon: latLng.longitude, name: name));
     } finally {
-      if (mounted) setState(() { _isReverseGeocoding = false; _isAddingWaypointMode = false; });
+      if (mounted) setState(() => _isReverseGeocoding = false);
     }
   }
 
@@ -157,11 +166,12 @@ class _HomePageState extends State<HomePage> {
       ),
       body: Stack(
         children: [
-          // --- Carte plein écran ---
+          // ── 0. Carte MapLibre (fond) ──────────────────────────────────
+          // IMPORTANT : pas de onMapClick ici. Le GestureDetector au-dessus
+          // gère les taps pour éviter que MapLibre capture aussi les taps du FAB.
           Positioned.fill(
             child: MapLibreMap(
               onMapCreated: _onMapCreated,
-              onMapClick: _onMapClick,
               styleString: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
               initialCameraPosition: const CameraPosition(target: LatLng(20.0, 0.0), zoom: 2.0),
               myLocationEnabled: true,
@@ -170,13 +180,27 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
 
-          // --- Bannière erreur GPS ---
+          // ── 1. Overlay transparent (actif en mode ajout de waypoint) ──
+          // Positionné SOUS les boutons/panneaux dans le Stack pour que
+          // ceux-ci restent cliquables normalement.
+          // HitTestBehavior.opaque : capture les taps même sur fond transparent.
+          if (_isAddingWaypointMode && !_isReverseGeocoding)
+            Positioned.fill(
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTapUp: _handleMapTap,
+                child: const SizedBox.expand(),
+              ),
+            ),
+
+          // ── 2. Bannière erreur GPS ────────────────────────────────────
           if (_locationError)
             Positioned(
               top: 12, left: 16, right: 16,
               child: Material(
                 borderRadius: BorderRadius.circular(12),
                 color: Colors.red.shade100,
+                elevation: 2,
                 child: const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(children: [
@@ -188,10 +212,10 @@ class _HomePageState extends State<HomePage> {
               ),
             ),
 
-          // --- Bannière mode ajout waypoint ---
-          if (_isAddingWaypointMode)
+          // ── 3. Bannière mode ajout waypoint ──────────────────────────
+          if (_isAddingWaypointMode || _isReverseGeocoding)
             Positioned(
-              top: _locationError ? 70 : 12, left: 16, right: 16,
+              top: _locationError ? 70 : 12, left: 16, right: 72,
               child: Material(
                 borderRadius: BorderRadius.circular(12),
                 color: Colors.orange.shade50,
@@ -202,37 +226,38 @@ class _HomePageState extends State<HomePage> {
                     if (_isReverseGeocoding)
                       const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                     else
-                      const Icon(Icons.touch_app, color: Colors.orange),
+                      const Icon(Icons.touch_app, color: Colors.orange, size: 20),
                     const SizedBox(width: 10),
                     Expanded(child: Text(
-                      _isReverseGeocoding ? 'Identification du lieu...' : 'Appuyez sur la carte pour ajouter un point',
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+                      _isReverseGeocoding
+                          ? 'Identification du lieu...'
+                          : 'Appuyez sur la carte pour placer un point',
+                      style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
                     )),
-                    TextButton(
-                      onPressed: () => setState(() => _isAddingWaypointMode = false),
-                      child: const Text('Annuler'),
-                    ),
                   ]),
                 ),
               ),
             ),
 
-          // --- Bouton flottant : activer/désactiver le mode tap ---
+          // ── 4. FAB pour activer/désactiver le mode tap ────────────────
+          // Positionné APRÈS l'overlay dans le Stack → il est au-dessus
+          // et absorbe son propre tap sans le transmettre à l'overlay.
           Positioned(
             top: 12, right: 12,
             child: FloatingActionButton.small(
-              heroTag: 'add_waypoint',
-              tooltip: 'Ajouter un point sur la carte',
+              heroTag: 'add_waypoint_fab',
+              tooltip: _isAddingWaypointMode ? 'Annuler' : 'Placer un point sur la carte',
               backgroundColor: _isAddingWaypointMode ? Colors.orange : Colors.white,
+              elevation: 4,
               onPressed: () => setState(() => _isAddingWaypointMode = !_isAddingWaypointMode),
               child: Icon(
-                Icons.add_location_alt,
+                _isAddingWaypointMode ? Icons.close : Icons.add_location_alt,
                 color: _isAddingWaypointMode ? Colors.white : Colors.grey[700],
               ),
             ),
           ),
 
-          // --- Panneau de contrôle en bas ---
+          // ── 5. Panneau de contrôle en bas ────────────────────────────
           Positioned(
             bottom: 20, left: 16, right: 16,
             child: SingleChildScrollView(
