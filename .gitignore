@@ -1,0 +1,8 @@
+AI_ARCHITECTURE.md
+plans.md
+
+__pycache__
+venv
+.env
+.dart_tool
+.idea

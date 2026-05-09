@@ -1,0 +1,33 @@
+services:
+  api:
+    build:
+      context: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      - VALHALLA_URL=http://valhalla:8002
+    volumes:
+      - ./backend:/app
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    depends_on:
+      - valhalla
+
+  valhalla:
+    image: ghcr.io/gis-ops/docker-valhalla/valhalla:latest
+    ports:
+      - "8002:8002"
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    environment:
+      - tile_urls=https://download.geofabrik.de/europe/ireland-and-northern-ireland-latest.osm.pbf
+      - build_elevation=True
+      - server_threads=1
+      - build_admins=True
+      - build_time_zones=True
+    volumes:
+      - valhalla_data:/custom_files
+
+volumes:
+  valhalla_data:
