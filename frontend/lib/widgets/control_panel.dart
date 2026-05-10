@@ -20,6 +20,7 @@ class ControlPanel extends StatefulWidget {
   final VoidCallback onLoadingEnd;
   final bool hasRoute;
   final VoidCallback? onShowDirections;
+  final VoidCallback? onExportGpx;
   final VoidCallback? onShowSteps;
   final double routeDistanceM;
   final int routeTimeS;
@@ -39,6 +40,7 @@ class ControlPanel extends StatefulWidget {
     required this.onLoadingEnd,
     this.hasRoute = false,
     this.onShowDirections,
+    this.onExportGpx,
     this.onShowSteps,
     this.routeDistanceM = 0,
     this.routeTimeS = 0,
@@ -437,7 +439,6 @@ class _ControlPanelState extends State<ControlPanel> {
               Expanded(
                 flex: 3,
                 child: FilledButton.icon(
-                  // Désactivé tant qu'il n'y a pas de parcours
                   onPressed: widget.hasRoute ? widget.onShowDirections : null,
                   icon: const Icon(Icons.navigation, size: 20),
                   label: const Text('Départ', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
@@ -448,6 +449,27 @@ class _ControlPanelState extends State<ControlPanel> {
                   ),
                 ),
               ),
+              const SizedBox(width: 8),
+              if (widget.hasRoute)
+                Tooltip(
+                  message: 'Exporter en GPX',
+                  child: IconButton.filledTonal(
+                    onPressed: widget.onExportGpx,
+                    icon: const Icon(Icons.download),
+                    style: IconButton.styleFrom(
+                      padding: const EdgeInsets.all(14),
+                    ),
+                  ),
+                ),
+              if (!widget.hasRoute)
+                IconButton.filledTonal(
+                  onPressed: null,
+                  icon: const Icon(Icons.download),
+                  style: IconButton.styleFrom(
+                    padding: const EdgeInsets.all(14),
+                    disabledBackgroundColor: Colors.grey[300],
+                  ),
+                ),
             ]),
           ],
         ),

@@ -3,12 +3,24 @@ import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:math' show Point;
+import 'dart:io';
+import 'dart:async';
+import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'models/preferences.dart';
 import 'services/geocoding_service.dart';
 import 'utils/maps_utils.dart';
 import 'widgets/control_panel.dart';
 import 'widgets/directions_panel.dart';
 import 'widgets/waypoint_search.dart';
+
+class AppNotification {
+  final String message;
+  final DateTime time;
+  final Color color;
+  AppNotification(this.message, this.time, this.color);
+}
 
 void main() => runApp(const StrideApp());
 
@@ -40,6 +52,16 @@ class _HomePageState extends State<HomePage> {
   Position? _currentPosition;
   bool _locationError = false;
   bool _isLoading = false;
+  bool _isNavigating = false;
+  MyLocationTrackingMode _trackingMode = MyLocationTrackingMode.tracking;
+
+  StreamSubscription<Position>? _positionStream;
+  bool _isOffRoute = false;
+
+  final List<AppNotification> _notificationsList = [];
+  AppNotification? _currentActiveNotification;
+  Timer? _notificationTimer;
+  bool _showNotificationsHistory = false;
 
   // Route courante
   List<dynamic> _maneuvers = [];
@@ -198,27 +220,102 @@ class _HomePageState extends State<HomePage> {
     Future.delayed(const Duration(milliseconds: 200), _frameRoute);
   }
 
-  /// BUG FIX #3 — Construit l'URL Google Maps avec jusqu'à 23 waypoints
-  /// extraits régulièrement du tracé Valhalla pour mieux l'approximer.
-  /// Délégué à l'utilitaire partagé maps_utils.dart (même logique que DirectionsPanel).
-  Future<void> _launchMaps() async {
-    if (_currentPosition == null) return;
-    final url = buildGoogleMapsUrl(
-      originLat: _currentPosition!.latitude,
-      originLon: _currentPosition!.longitude,
-      routeCoords: _routeCoords,
-      userWaypoints: _waypoints,
-    );
+  void _startNavigation() {
+    setState(() {
+      _isNavigating = true;
+      _isPanelCollapsed = true;
+      _trackingMode = MyLocationTrackingMode.trackingCompass;
+    });
+
+    if (_currentPosition != null) {
+      _mapController?.animateCamera(
+        CameraUpdate.newCameraPosition(
+          CameraPosition(
+            target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
+            zoom: 19.5,
+            tilt: 60.0,
+          ),
+        ),
+      );
+    }
+
+    // Lance le suivi en arrière-plan pour le hors-piste
+    _positionStream = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
+    ).listen((Position pos) {
+      if (mounted) {
+        setState(() => _currentPosition = pos);
+        _checkOffRoute(pos);
+      }
+    });
+  }
+
+  void _checkOffRoute(Position pos) {
+    if (_routeCoords.isEmpty || !_isNavigating) return;
+    
+    double minDistance = double.infinity;
+    for (final p in _routeCoords) {
+      double dist = Geolocator.distanceBetween(pos.latitude, pos.longitude, p.latitude, p.longitude);
+      if (dist < minDistance) minDistance = dist;
+    }
+    
+    if (minDistance > 40.0) { // Si écart > 40m
+      if (!_isOffRoute) {
+        _isOffRoute = true;
+        HapticFeedback.heavyImpact(); // Vibration forte !
+        _showNotification("Attention, tu t'éloignes de l'itinéraire !", color: Colors.orange);
+      }
+    } else if (minDistance < 20.0) { // Si on revient à < 20m
+      if (_isOffRoute) {
+        _isOffRoute = false;
+        HapticFeedback.lightImpact();
+        _showNotification("Te revoilà sur le bon chemin !", color: Colors.green);
+      }
+    }
+  }
+
+  void _stopNavigation() {
+    setState(() {
+      _isNavigating = false;
+      _isPanelCollapsed = false;
+      _trackingMode = MyLocationTrackingMode.tracking;
+    });
+    _positionStream?.cancel();
+    _isOffRoute = false;
+    _frameRoute();
+  }
+
+  Future<void> _exportGpx() async {
+    if (_routeCoords.isEmpty) return;
+    _showNotification('Création du fichier GPX...', color: Colors.blueAccent);
+    
     try {
-      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+      final buffer = StringBuffer();
+      buffer.writeln('<?xml version="1.0" encoding="UTF-8"?>');
+      buffer.writeln('<gpx version="1.1" creator="Stride">');
+      buffer.writeln('  <trk>');
+      buffer.writeln('    <name>Mon Itinéraire Stride</name>');
+      buffer.writeln('    <trkseg>');
+      for (final p in _routeCoords) {
+        buffer.writeln('      <trkpt lat="${p.latitude}" lon="${p.longitude}"></trkpt>');
+      }
+      buffer.writeln('    </trkseg>');
+      buffer.writeln('  </trk>');
+      buffer.writeln('</gpx>');
+
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/stride_route.gpx');
+      await file.writeAsString(buffer.toString());
+
+      await Share.shareXFiles([XFile(file.path)], text: 'Voici mon itinéraire de marche généré par Stride !');
     } catch (e) {
-      if (mounted) _showSnackBar('Impossible d\'ouvrir l\'application de cartes.');
+      _showNotification('Erreur lors de l\'export: $e');
     }
   }
 
   void _onRouteGenerated(Map<String, dynamic> data) {
     if (data['status'] == 'downloading') {
-      _showSnackBar(data['message'] as String, color: Colors.blueAccent, duration: 5);
+      _showNotification(data['message'] as String, color: Colors.blueAccent, duration: 5);
       return;
     }
     final geojson = data['geojson'];
@@ -241,16 +338,28 @@ class _HomePageState extends State<HomePage> {
       _maneuvers = (data['maneuvers'] as List<dynamic>?) ?? [];
     });
     final km = (_routeDistanceM / 1000).toStringAsFixed(2);
-    _showSnackBar('Itinéraire généré : $km km', color: Colors.green);
+    _showNotification('Itinéraire généré : $km km', color: Colors.green);
   }
 
-  void _showSnackBar(String msg, {Color color = Colors.red, int duration = 3}) {
+  void _showNotification(String msg, {Color color = Colors.red, int duration = 3}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
-      backgroundColor: color,
-      duration: Duration(seconds: duration),
-    ));
+    
+    final notif = AppNotification(msg, DateTime.now(), color);
+    setState(() {
+      _notificationsList.add(notif);
+      _currentActiveNotification = notif;
+    });
+
+    _notificationTimer?.cancel();
+    _notificationTimer = Timer(Duration(seconds: duration), () {
+      if (mounted) {
+        setState(() {
+          if (_currentActiveNotification == notif) {
+            _currentActiveNotification = null;
+          }
+        });
+      }
+    });
   }
 
   void _showDirectionsPanel() {
@@ -292,7 +401,7 @@ class _HomePageState extends State<HomePage> {
               styleString: 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json',
               initialCameraPosition: const CameraPosition(target: LatLng(20.0, 0.0), zoom: 2.0),
               myLocationEnabled: true,
-              myLocationTrackingMode: MyLocationTrackingMode.tracking,
+              myLocationTrackingMode: _trackingMode,
               compassEnabled: true,
             ),
           ),
@@ -389,31 +498,137 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
 
-          // ── 4. Panneau de contrôle en bas ────────────────────────────
+          // ── 4. Panneau de contrôle en bas (Caché si navigation en cours) ──
+          if (!_isNavigating)
+            Positioned(
+              bottom: 20, left: 16, right: 16,
+              child: SingleChildScrollView(
+                child: ControlPanel(
+                  key: _panelKey,
+                  currentPosition: _currentPosition,
+                  isLoading: _isLoading,
+                  waypoints: _waypoints,
+                  onWaypointAdded: _addWaypoint,
+                  onWaypointRemoved: _removeWaypoint,
+                  onRouteGenerated: _onRouteGenerated,
+                  onError: (msg) => _showNotification(msg),
+                  onLoadingStart: () => setState(() => _isLoading = true),
+                  onLoadingEnd: () => setState(() => _isLoading = false),
+                  hasRoute: _maneuvers.isNotEmpty,
+                  isCollapsed: _isPanelCollapsed,
+                  onToggleCollapse: _togglePanelCollapse,
+                  onShowDirections: _startNavigation,
+                  onExportGpx: _exportGpx,
+                  onShowSteps: _showDirectionsPanel,
+                  routeDistanceM: _routeDistanceM,
+                  routeTimeS: _routeTimeS,
+                ),
+              ),
+            ),
+
+          // ── 5. Bouton Quitter Navigation ───────────────────────────────
+          if (_isNavigating)
+            Positioned(
+              bottom: 40, left: 0, right: 0,
+              child: Center(
+                child: FloatingActionButton.extended(
+                  onPressed: _stopNavigation,
+                  backgroundColor: Colors.red[600],
+                  elevation: 8,
+                  icon: const Icon(Icons.stop_circle, color: Colors.white),
+                  label: const Text('Arrêter la navigation', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ),
+            ),
+
+          // ── 6. Bouton Historique Notifications (Haut Droite) ───────────
           Positioned(
-            bottom: 20, left: 16, right: 16,
-            child: SingleChildScrollView(
-              child: ControlPanel(
-                key: _panelKey,
-                currentPosition: _currentPosition,
-                isLoading: _isLoading,
-                waypoints: _waypoints,
-                onWaypointAdded: _addWaypoint,
-                onWaypointRemoved: _removeWaypoint,
-                onRouteGenerated: _onRouteGenerated,
-                onError: (msg) => _showSnackBar(msg),
-                onLoadingStart: () => setState(() => _isLoading = true),
-                onLoadingEnd: () => setState(() => _isLoading = false),
-                hasRoute: _maneuvers.isNotEmpty,
-                isCollapsed: _isPanelCollapsed,
-                onToggleCollapse: _togglePanelCollapse,
-                onShowDirections: _launchMaps,
-                onShowSteps: _showDirectionsPanel,
-                routeDistanceM: _routeDistanceM,
-                routeTimeS: _routeTimeS,
+            top: 12, right: 16,
+            child: FloatingActionButton.small(
+              heroTag: 'notif_history_fab',
+              backgroundColor: Colors.white,
+              elevation: 4,
+              onPressed: () => setState(() => _showNotificationsHistory = !_showNotificationsHistory),
+              child: Icon(
+                _showNotificationsHistory ? Icons.close : Icons.notifications,
+                color: _notificationsList.isEmpty ? Colors.grey[400] : Colors.blueAccent,
               ),
             ),
           ),
+
+          // ── 7. Panneau Historique Notifications ─────────────────────────
+          if (_showNotificationsHistory)
+            Positioned(
+              top: 70, right: 16, bottom: 200,
+              width: 280,
+              child: Material(
+                elevation: 8,
+                borderRadius: BorderRadius.circular(16),
+                color: Colors.white.withOpacity(0.98),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(color: Colors.blueAccent.withOpacity(0.1), borderRadius: const BorderRadius.vertical(top: Radius.circular(16))),
+                      child: const Row(
+                        children: [
+                          Icon(Icons.history, size: 18),
+                          SizedBox(width: 8),
+                          Text('Historique', style: TextStyle(fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: _notificationsList.isEmpty 
+                        ? const Center(child: Text('Aucune notification', style: TextStyle(color: Colors.grey)))
+                        : ListView.builder(
+                          padding: const EdgeInsets.all(8),
+                          itemCount: _notificationsList.length,
+                          itemBuilder: (ctx, i) {
+                            final n = _notificationsList.reversed.toList()[i];
+                            return Container(
+                              margin: const EdgeInsets.only(bottom: 8),
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: n.color.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(8),
+                                border: Border.all(color: n.color.withOpacity(0.5)),
+                              ),
+                              child: Text(n.message, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
+                            );
+                          },
+                        ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // ── 8. Toast de Notification Active (Haut Droite) ───────────────
+          if (_currentActiveNotification != null && !_showNotificationsHistory)
+            Positioned(
+              top: 70, right: 16,
+              child: Material(
+                color: Colors.transparent,
+                child: AnimatedOpacity(
+                  opacity: 1.0,
+                  duration: const Duration(milliseconds: 300),
+                  child: Container(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _currentActiveNotification!.color.withOpacity(0.95),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 3))],
+                    ),
+                    child: Text(
+                      _currentActiveNotification!.message,
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

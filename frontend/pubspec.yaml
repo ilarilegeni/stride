@@ -14,6 +14,8 @@ dependencies:
   maplibre_gl: ^0.26.0 # Version hypothétique ou récente pour intégration OSM
   geolocator: ^14.0.2 # Pour récupérer la position GPS
   url_launcher: ^6.2.0 # Pour ouvrir Google Maps / Apple Maps
+  share_plus: ^12.0.2
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
