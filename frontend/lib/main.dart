@@ -116,15 +116,26 @@ class _HomePageState extends State<HomePage> {
   /// du ControlPanel (remplacement de contentInsets, absent en v0.26.0).
   void _animateCameraToPoint(double lat, double lon) {
     const double eps = 0.001; // ~110 m — assez petit pour rester à zoom ~14
-    _mapController?.animateCamera(
-      CameraUpdate.newLatLngBounds(
-        LatLngBounds(
-          southwest: LatLng(lat - eps, lon - eps),
-          northeast: LatLng(lat + eps, lon + eps),
-        ),
-        left: 0, top: 0, right: 0, bottom: _panelBottomInset,
-      ),
-    );
+    
+    // BUG FIX: On attend 400ms pour s'assurer que le rendu iOS de la carte a bien une hauteur > 0.
+    // Sinon, appliquer un 'bottom padding' de 360px sur une hauteur de 0px génère une erreur mathématique
+    // dans le moteur C++ (std::domain_error) car la zone d'affichage devient négative.
+    Future.delayed(const Duration(milliseconds: 400), () {
+      if (!mounted || _mapController == null) return;
+      try {
+        _mapController!.animateCamera(
+          CameraUpdate.newLatLngBounds(
+            LatLngBounds(
+              southwest: LatLng(lat - eps, lon - eps),
+              northeast: LatLng(lat + eps, lon + eps),
+            ),
+            left: 0, top: 0, right: 0, bottom: _panelBottomInset,
+          ),
+        );
+      } catch (e) {
+        debugPrint("Erreur animateCamera: $e");
+      }
+    });
   }
 
   void _onMapCreated(MapLibreMapController controller) {
