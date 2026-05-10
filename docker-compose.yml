@@ -6,6 +6,8 @@ services:
       - "8000:8000"
     environment:
       - VALHALLA_URL=http://valhalla:8002
+    env_file:
+      - ./backend/.env
     volumes:
       - ./backend:/app
     command: [ "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload" ]
