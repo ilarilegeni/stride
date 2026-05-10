@@ -1,8 +1,16 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Security
+from fastapi.security.api_key import APIKeyHeader
 from app.models.route import RouteRequest
 from app.services.valhalla import generate_round_trip
 from app.services.geofabrik import get_region_pbf_url
 from app.core.config import settings
+
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+def get_api_key(api_key_header: str = Security(api_key_header)):
+    if api_key_header == settings.API_KEY:
+        return api_key_header
+    raise HTTPException(status_code=403, detail="Clé API invalide ou manquante")
 
 router = APIRouter()
 
@@ -14,7 +22,7 @@ def download_and_rebuild_map(pbf_url: str):
 
 
 @router.post("/routes/generate")
-def generate_route(request: RouteRequest, background_tasks: BackgroundTasks):
+def generate_route(request: RouteRequest, background_tasks: BackgroundTasks, api_key: str = Security(get_api_key)):
     """
     Génère un itinéraire circulaire.
 

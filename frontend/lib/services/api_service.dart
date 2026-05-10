@@ -3,7 +3,8 @@ import 'dart:convert';
 import '../models/preferences.dart';
 
 class ApiService {
-  static const String _baseUrl = 'http://192.168.0.234:8000';
+  // On masque aussi le nom de domaine personnel
+  static const String _baseUrl = String.fromEnvironment('API_URL', defaultValue: 'http://127.0.0.1:8000');
 
   static Future<Map<String, dynamic>> generateRoute({
     required double lat,
@@ -35,9 +36,17 @@ class ApiService {
         body['walking_speed_kmh'] = userProfile.walkingSpeedKmh;
     }
 
+    // On récupère la clé API depuis les variables d'environnement de compilation
+    // (par défaut on utilise la clé de développement si non spécifiée)
+    const apiKey = String.fromEnvironment('API_KEY',
+        defaultValue: 'CLE_API_PAR_DEFAUT');
+
     final response = await http.post(
       Uri.parse('$_baseUrl/api/routes/generate'),
-      headers: {'Content-Type': 'application/json'},
+      headers: {
+        'Content-Type': 'application/json',
+        'X-API-Key': apiKey,
+      },
       body: jsonEncode(body),
     );
 
