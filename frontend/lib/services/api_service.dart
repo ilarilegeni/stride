@@ -3,7 +3,7 @@ import 'dart:convert';
 import '../models/preferences.dart';
 
 class ApiService {
-  static const String _baseUrl = 'http://127.0.0.1:8000';
+  static const String _baseUrl = 'http://192.168.0.234:8000';
 
   static Future<Map<String, dynamic>> generateRoute({
     required double lat,

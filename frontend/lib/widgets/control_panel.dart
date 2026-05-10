@@ -20,6 +20,9 @@ class ControlPanel extends StatefulWidget {
   final VoidCallback onLoadingEnd;
   final bool hasRoute;
   final VoidCallback? onShowDirections;
+  final VoidCallback? onShowSteps;
+  final double routeDistanceM;
+  final int routeTimeS;
 
   const ControlPanel({
     super.key,
@@ -34,6 +37,9 @@ class ControlPanel extends StatefulWidget {
     required this.onLoadingEnd,
     this.hasRoute = false,
     this.onShowDirections,
+    this.onShowSteps,
+    this.routeDistanceM = 0,
+    this.routeTimeS = 0,
   });
 
   @override
@@ -215,6 +221,13 @@ class _ControlPanelState extends State<ControlPanel> {
     }
   }
 
+  /// Formate une durée en secondes en texte lisible (ex: "45 min" ou "1h 20min").
+  String _formatDuration(int seconds) {
+    final m = seconds ~/ 60;
+    if (m < 60) return '$m min';
+    return '${m ~/ 60}h ${(m % 60).toString().padLeft(2, '0')}min';
+  }
+
   Widget _filterChip(String label, IconData icon, bool value, ValueChanged<bool> onChange) {
     final color = Theme.of(context).colorScheme.primary;
     return FilterChip(
@@ -335,45 +348,78 @@ class _ControlPanelState extends State<ControlPanel> {
 
             const SizedBox(height: 12),
 
-            // Bouton Générer — ou ligne [Regénérer | Départ] si un trajet existe
-            if (!widget.hasRoute)
-              FilledButton.icon(
-                onPressed: widget.isLoading ? null : _generate,
-                icon: widget.isLoading
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.map),
-                label: Text(widget.isLoading ? 'Génération...' : 'Générer mon parcours', style: const TextStyle(fontSize: 15)),
-                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-              )
-            else
-              Row(children: [
-                // Regénérer (outlined, moins proéminent)
-                Expanded(
-                  flex: 2,
-                  child: OutlinedButton.icon(
-                    onPressed: widget.isLoading ? null : _generate,
-                    icon: widget.isLoading
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Icon(Icons.refresh, size: 18),
-                    label: const Text('Regénérer', style: TextStyle(fontSize: 13)),
-                    style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
-                  ),
+            // Résumé de l'itinéraire généré
+            if (widget.hasRoute) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: Colors.green.shade200),
                 ),
-                const SizedBox(width: 10),
-                // Départ → (plein, vert vif — très visible)
-                Expanded(
-                  flex: 3,
-                  child: FilledButton.icon(
-                    onPressed: widget.onShowDirections,
-                    icon: const Icon(Icons.navigation, size: 20),
-                    label: const Text('Départ', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Colors.green[700],
-                      padding: const EdgeInsets.symmetric(vertical: 14),
+                child: Row(children: [
+                  const Icon(Icons.directions_walk, size: 18, color: Colors.green),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${(widget.routeDistanceM / 1000).toStringAsFixed(2)} km',
+                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                  const SizedBox(width: 12),
+                  const Icon(Icons.timer_outlined, size: 16, color: Colors.green),
+                  const SizedBox(width: 4),
+                  Text(
+                    _formatDuration(widget.routeTimeS),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: widget.onShowSteps,
+                    icon: const Icon(Icons.list_alt, size: 14),
+                    label: const Text('Étapes', style: TextStyle(fontSize: 12)),
+                    style: TextButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ),
+                ]),
+              ),
+              const SizedBox(height: 10),
+            ],
+
+            // Deux boutons toujours visibles côte à côte :
+            // [🗺 Générer / Regénérer]  [🧭 Départ]
+            // "Départ" est grisé tant qu'aucun parcours n'a été généré.
+            Row(children: [
+              Expanded(
+                flex: 2,
+                child: FilledButton.icon(
+                  onPressed: widget.isLoading ? null : _generate,
+                  icon: widget.isLoading
+                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Icon(widget.hasRoute ? Icons.refresh : Icons.map, size: 18),
+                  label: Text(
+                    widget.isLoading ? 'Génération...' : (widget.hasRoute ? 'Regénérer' : 'Générer'),
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
                 ),
-              ]),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                flex: 3,
+                child: FilledButton.icon(
+                  // Désactivé tant qu'il n'y a pas de parcours
+                  onPressed: widget.hasRoute ? widget.onShowDirections : null,
+                  icon: const Icon(Icons.navigation, size: 20),
+                  label: const Text('Départ', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: widget.hasRoute ? Colors.green[700] : Colors.grey[400],
+                    disabledBackgroundColor: Colors.grey[300],
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                ),
+              ),
+            ]),
           ],
         ),
       ),

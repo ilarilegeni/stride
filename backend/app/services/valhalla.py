@@ -52,6 +52,17 @@ def _build_costing_options(preferences: RoutePreferences) -> dict:
         options["service_road_factor"] = 0.1
         options["max_hiking_difficulty"] = 0
 
+    if preferences.prefer_culture:
+        # Mode "Culture" : favorise les rues piétonnes et living streets des centres-villes
+        # typiquement riches en monuments, musées et POI historiques (tags OSM historic=*,
+        # tourism=*). Valhalla pedestrian n'expose pas de filtre POI direct ; on réduit le
+        # coût des rues piétonnes et on pénalise les pistes hors-zones urbaines pour que
+        # l'algorithme privilégie les secteurs denses en patrimoine.
+        options["use_living_streets"] = 1.0
+        options["use_tracks"] = max(options.get("use_tracks", 0.5) - 0.3, 0.0)
+        # Pénalise un peu les autoroutes et routes primaires pour rester en zone piétonne
+        options["service_penalty"] = min(options.get("service_penalty", 0) + 30, 300)
+
     return options
 
 
@@ -76,18 +87,21 @@ def _random_loop_waypoints(lat: float, lon: float, radius_m: float) -> list[dict
 
 
 def _parse_maneuvers(legs: list) -> list[dict]:
-    """Extrait les manœuvres de toutes les jambes du trajet Valhalla."""
+    """Extrait les manœuvres de toutes les jambes du trajet Valhalla.
+    Utilise `or ""` (au lieu de .get(key, default)) pour gérer le cas où
+    Valhalla retourne explicitement null pour les champs de texte.
+    """
     maneuvers = []
     for leg in legs:
         for m in leg.get("maneuvers", []):
             mtype = m.get("type", 0)
-            streets = m.get("street_names", [])
+            streets = m.get("street_names") or []
             maneuvers.append({
                 "type": mtype,
                 "label": _MANEUVER_LABELS.get(mtype, "Continuer"),
-                "instruction": m.get("instruction", ""),
-                "street": streets[0] if streets else "",
-                "length_m": round(m.get("length", 0) * 1000),
+                "instruction": m.get("instruction") or "",
+                "street": (streets[0] if streets else "") or "",
+                "length_m": round((m.get("length") or 0) * 1000),
                 "time_s": m.get("time", 0),
             })
     return maneuvers
@@ -124,9 +138,10 @@ def generate_round_trip(
         "locations": locations,
         "costing": "pedestrian",
         "costing_options": {"pedestrian": _build_costing_options(preferences)},
-        # "maneuvers" : on récupère les instructions pas-à-pas
+        # directions_type "maneuvers" : on récupère les instructions pas-à-pas.
+        # Pas de language: certaines versions de Valhalla retournent des
+        # instructions null pour fr-FR sur certaines manœuvres (destination, etc.).
         "directions_type": "maneuvers",
-        "directions_options": {"language": "fr-FR"},
     }
 
     try:

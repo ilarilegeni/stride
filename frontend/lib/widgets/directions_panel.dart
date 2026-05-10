@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/preferences.dart';
+import '../utils/maps_utils.dart';
 
 /// Icône selon le type de manœuvre Valhalla.
 IconData _maneuverIcon(int type) => switch (type) {
@@ -32,6 +34,9 @@ class DirectionsPanel extends StatelessWidget {
   final int timeS;
   final double? startLat;
   final double? startLon;
+  /// Tracé complet Valhalla — utilisé pour construire l'URL Google Maps avec
+  /// 23 waypoints intermédiaires (BUG FIX #3 : même logique que le bouton Départ).
+  final List<LatLng> routeCoords;
   final List<WaypointModel> waypoints;
 
   const DirectionsPanel({
@@ -41,29 +46,25 @@ class DirectionsPanel extends StatelessWidget {
     required this.timeS,
     this.startLat,
     this.startLon,
+    required this.routeCoords,
     required this.waypoints,
   });
 
   Future<void> _exportToMaps(BuildContext context) async {
     if (startLat == null || startLon == null) return;
-    final lat = startLat!;
-    final lon = startLon!;
 
-    // Waypoints utilisateur comme étapes intermédiaires
-    final wps = waypoints.map((w) => '${w.lat},${w.lon}').join('|');
-
-    // Google Maps (fonctionne sur Android, iOS si installé, et navigateur web)
-    final googleUri = Uri.parse(
-      'https://www.google.com/maps/dir/?api=1'
-      '&origin=$lat,$lon'
-      '&destination=$lat,$lon'
-      '${wps.isNotEmpty ? "&waypoints=$wps" : ""}'
-      '&travelmode=walking',
+    // BUG FIX #3 — Utilise la même logique que _launchMaps() dans main.dart
+    // pour générer une URL avec jusqu'à 23 waypoints Valhalla.
+    final url = buildGoogleMapsUrl(
+      originLat: startLat!,
+      originLon: startLon!,
+      routeCoords: routeCoords,
+      userWaypoints: waypoints,
     );
 
-    if (await canLaunchUrl(googleUri)) {
-      await launchUrl(googleUri, mode: LaunchMode.externalApplication);
-    } else {
+    try {
+      await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+    } catch (e) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Impossible d\'ouvrir l\'application de cartes.')),
@@ -131,10 +132,10 @@ class DirectionsPanel extends StatelessWidget {
                 separatorBuilder: (_, __) => const Divider(height: 1, indent: 56),
                 itemBuilder: (_, i) {
                   final m = maneuvers[i] as Map<String, dynamic>;
-                  final type = m['type'] as int? ?? 0;
+                  final type = (m['type'] as num?)?.toInt() ?? 0;
                   final instruction = m['instruction'] as String? ?? '';
-                  final lengthM = m['length_m'] as int? ?? 0;
-                  final timeStep = m['time_s'] as int? ?? 0;
+                  final lengthM = (m['length_m'] as num?)?.toInt() ?? 0;
+                  final timeStep = (m['time_s'] as num?)?.toInt() ?? 0;
                   final isFirst = i == 0;
                   final isLast = type == 4 || type == 5 || type == 6;
 

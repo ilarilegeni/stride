@@ -7,8 +7,13 @@ import '../services/geocoding_service.dart';
 /// Appelle [onWaypointSelected] quand l'utilisateur choisit un résultat.
 class WaypointSearch extends StatefulWidget {
   final ValueChanged<WaypointModel> onWaypointSelected;
+  final String hintText;
 
-  const WaypointSearch({super.key, required this.onWaypointSelected});
+  const WaypointSearch({
+    super.key,
+    required this.onWaypointSelected,
+    this.hintText = 'Ajouter un lieu à passer...',
+  });
 
   @override
   State<WaypointSearch> createState() => _WaypointSearchState();
@@ -60,7 +65,7 @@ class _WaypointSearchState extends State<WaypointSearch> {
           controller: _controller,
           onChanged: _onChanged,
           decoration: InputDecoration(
-            hintText: 'Ajouter un lieu à passer...',
+            hintText: widget.hintText,
             prefixIcon: Icon(Icons.search, color: color),
             suffixIcon: _isSearching
                 ? const Padding(
