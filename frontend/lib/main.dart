@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
+import 'dart:math' show Point;
 import 'models/preferences.dart';
 import 'services/geocoding_service.dart';
 import 'utils/maps_utils.dart';
@@ -52,9 +53,18 @@ class _HomePageState extends State<HomePage> {
   bool _isAddingWaypointMode = false;
   bool _isReverseGeocoding = false;
 
-  // Hauteur estimée du panneau de contrôle en bas (en pixels logiques).
-  // Utilisée comme inset bottom pour que MapLibre centre correctement.
-  static const double _panelBottomInset = 360.0;
+  bool _isPanelCollapsed = false;
+  final GlobalKey _panelKey = GlobalKey();
+
+  // Calcule la hauteur réelle du panneau de contrôle pour centrer la carte parfaitement.
+  double get _panelBottomInset {
+    if (_panelKey.currentContext != null) {
+      final RenderBox box = _panelKey.currentContext!.findRenderObject() as RenderBox;
+      // On ajoute 40.0 pour inclure le Positioned(bottom: 20) et laisser une marge visuelle
+      return box.size.height + 40.0; 
+    }
+    return _isPanelCollapsed ? 150.0 : 360.0;
+  }
 
   @override
   void initState() {
@@ -75,19 +85,30 @@ class _HomePageState extends State<HomePage> {
     }
     final pos = await Geolocator.getCurrentPosition();
     setState(() => _currentPosition = pos);
+    _animateCameraToPoint(pos.latitude, pos.longitude);
+  }
+
+  /// Centre la caméra sur [lat, lon] en tenant compte du panneau bas.
+  /// newLatLngBounds avec un epsilon + padding bottom pousse le focal
+  /// point vers le haut, donc le marqueur GPS reste visible au-dessus
+  /// du ControlPanel (remplacement de contentInsets, absent en v0.26.0).
+  void _animateCameraToPoint(double lat, double lon) {
+    const double eps = 0.001; // ~110 m — assez petit pour rester à zoom ~14
     _mapController?.animateCamera(
-      CameraUpdate.newLatLngZoom(LatLng(pos.latitude, pos.longitude), 14.0),
+      CameraUpdate.newLatLngBounds(
+        LatLngBounds(
+          southwest: LatLng(lat - eps, lon - eps),
+          northeast: LatLng(lat + eps, lon + eps),
+        ),
+        left: 0, top: 0, right: 0, bottom: _panelBottomInset,
+      ),
     );
   }
 
   void _onMapCreated(MapLibreMapController controller) {
     _mapController = controller;
     if (_currentPosition != null) {
-      controller.animateCamera(
-        CameraUpdate.newLatLngZoom(
-          LatLng(_currentPosition!.latitude, _currentPosition!.longitude), 14.0,
-        ),
-      );
+      _animateCameraToPoint(_currentPosition!.latitude, _currentPosition!.longitude);
     }
   }
 
@@ -137,33 +158,44 @@ class _HomePageState extends State<HomePage> {
     final coords = (geojson['geometry']['coordinates'] as List)
         .map((c) => LatLng(c[1] as double, c[0] as double))
         .toList();
-    if (coords.isEmpty) return;
+    if (_routeCoords.isEmpty) return;
     await _mapController!.addLine(LineOptions(
-      geometry: coords,
+      geometry: _routeCoords,
       lineColor: '#4CAF50',
       lineWidth: 6.0,
       lineOpacity: 0.85,
     ));
+    _frameRoute();
+  }
 
-    double minLat = coords[0].latitude;
-    double maxLat = coords[0].latitude;
-    double minLon = coords[0].longitude;
-    double maxLon = coords[0].longitude;
-    for (var c in coords) {
+  void _frameRoute() {
+    if (_routeCoords.isEmpty || _mapController == null) return;
+    double minLat = _routeCoords[0].latitude;
+    double maxLat = _routeCoords[0].latitude;
+    double minLon = _routeCoords[0].longitude;
+    double maxLon = _routeCoords[0].longitude;
+    for (var c in _routeCoords) {
       if (c.latitude < minLat) minLat = c.latitude;
       if (c.latitude > maxLat) maxLat = c.latitude;
       if (c.longitude < minLon) minLon = c.longitude;
       if (c.longitude > maxLon) maxLon = c.longitude;
     }
 
-    // BUG FIX #1 — bottom padding = hauteur panneau pour que le tracé soit
-    // visible au-dessus du ControlPanel (et non caché derrière lui).
     _mapController!.animateCamera(
       CameraUpdate.newLatLngBounds(
         LatLngBounds(southwest: LatLng(minLat, minLon), northeast: LatLng(maxLat, maxLon)),
-        left: 40, top: 80, right: 40, bottom: _panelBottomInset.toInt(),
+        left: 40, top: 80, right: 40, bottom: _panelBottomInset,
       ),
     );
+  }
+
+  void _togglePanelCollapse() {
+    setState(() {
+      _isPanelCollapsed = !_isPanelCollapsed;
+    });
+    // On attend un peu plus longtemps (200ms) pour être sûr que l'animation/re-layout
+    // du ControlPanel est terminée avant de mesurer sa nouvelle taille.
+    Future.delayed(const Duration(milliseconds: 200), _frameRoute);
   }
 
   /// BUG FIX #3 — Construit l'URL Google Maps avec jusqu'à 23 waypoints
@@ -194,9 +226,13 @@ class _HomePageState extends State<HomePage> {
       final coords = (geojson['geometry']['coordinates'] as List)
           .map((c) => LatLng(c[1] as double, c[0] as double))
           .toList();
-      _drawRoute(geojson as Map<String, dynamic>);
       setState(() {
         _routeCoords = coords;
+        _isPanelCollapsed = true;
+      });
+      // On attend que le panneau se replie (changement d'état UI) pour récupérer sa nouvelle taille
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) _drawRoute(geojson as Map<String, dynamic>);
       });
     }
     setState(() {
@@ -258,10 +294,6 @@ class _HomePageState extends State<HomePage> {
               myLocationEnabled: true,
               myLocationTrackingMode: MyLocationTrackingMode.tracking,
               compassEnabled: true,
-              // BUG FIX #1 — Indique à MapLibre que le bas de la carte est
-              // recouvert par le panneau. Le point GPS et le centre de la
-              // caméra seront dans la zone visible, pas sous le panneau.
-              contentInsets: const EdgeInsets.only(bottom: _panelBottomInset),
             ),
           ),
 
@@ -362,6 +394,7 @@ class _HomePageState extends State<HomePage> {
             bottom: 20, left: 16, right: 16,
             child: SingleChildScrollView(
               child: ControlPanel(
+                key: _panelKey,
                 currentPosition: _currentPosition,
                 isLoading: _isLoading,
                 waypoints: _waypoints,
@@ -372,6 +405,8 @@ class _HomePageState extends State<HomePage> {
                 onLoadingStart: () => setState(() => _isLoading = true),
                 onLoadingEnd: () => setState(() => _isLoading = false),
                 hasRoute: _maneuvers.isNotEmpty,
+                isCollapsed: _isPanelCollapsed,
+                onToggleCollapse: _togglePanelCollapse,
                 onShowDirections: _launchMaps,
                 onShowSteps: _showDirectionsPanel,
                 routeDistanceM: _routeDistanceM,

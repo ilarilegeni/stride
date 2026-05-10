@@ -23,6 +23,8 @@ class ControlPanel extends StatefulWidget {
   final VoidCallback? onShowSteps;
   final double routeDistanceM;
   final int routeTimeS;
+  final bool isCollapsed;
+  final VoidCallback? onToggleCollapse;
 
   const ControlPanel({
     super.key,
@@ -40,6 +42,8 @@ class ControlPanel extends StatefulWidget {
     this.onShowSteps,
     this.routeDistanceM = 0,
     this.routeTimeS = 0,
+    this.isCollapsed = false,
+    this.onToggleCollapse,
   });
 
   @override
@@ -257,7 +261,21 @@ class _ControlPanelState extends State<ControlPanel> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // --- Points de passage ---
+            // --- Bouton pour réafficher les options quand c'est replié ---
+            if (widget.isCollapsed)
+              Center(
+                child: TextButton.icon(
+                  onPressed: widget.onToggleCollapse,
+                  icon: const Icon(Icons.tune, size: 18),
+                  label: const Text('Modifier les paramètres du trajet'),
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+                  ),
+                ),
+              ),
+
+            if (!widget.isCollapsed) ...[
+              // --- Points de passage ---
             Row(children: [
               Icon(Icons.route, size: 16, color: color),
               const SizedBox(width: 6),
@@ -347,6 +365,17 @@ class _ControlPanelState extends State<ControlPanel> {
             ]),
 
             const SizedBox(height: 12),
+            
+            // --- Bouton pour masquer les options si on a un trajet ---
+            if (widget.hasRoute)
+              Center(
+                child: IconButton(
+                  icon: const Icon(Icons.expand_more, color: Colors.grey),
+                  onPressed: widget.onToggleCollapse,
+                  tooltip: 'Masquer les paramètres',
+                ),
+              ),
+            ], // Fin du bloc if (!widget.isCollapsed)
 
             // Résumé de l'itinéraire généré
             if (widget.hasRoute) ...[
