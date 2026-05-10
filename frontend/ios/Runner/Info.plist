@@ -66,5 +66,11 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Stride a besoin de votre position pour vous situer sur la carte et générer vos itinéraires de marche.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Stride a besoin de votre position pour continuer à vous guider même lorsque l'application est en arrière-plan.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Stride a besoin de votre position pour la navigation et le suivi d'itinéraire.</string>
 </dict>
 </plist>
