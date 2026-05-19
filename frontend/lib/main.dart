@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:math' show Point;
 import 'dart:io';
@@ -10,10 +9,15 @@ import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'models/preferences.dart';
 import 'services/geocoding_service.dart';
-import 'utils/maps_utils.dart';
+import 'services/navigation_notification_service.dart';
 import 'widgets/control_panel.dart';
 import 'widgets/directions_panel.dart';
 import 'widgets/waypoint_search.dart';
+
+/// ─── DEBUG : Forcer une localisation initiale (null = utiliser le GPS réel) ───
+/// Pour débugger, décommente et modifie les coordonnées ci-dessous :
+// const _kDebugLocation = {'lat': 48.8566, 'lon': 2.3522}; // Paris
+const Map<String, double>? _kDebugLocation = null;
 
 class AppNotification {
   final String message;
@@ -69,6 +73,21 @@ class _HomePageState extends State<HomePage> {
   double _routeDistanceM = 0;
   int _routeTimeS = 0;
 
+  // Navigation en cours — état temps réel
+  int _currentManeuverIndex = 0;   // index de la prochaine manœuvre
+  double _remainingDistanceM = 0;  // distance restante sur le parcours
+  int _remainingTimeS = 0;         // temps restant estimé
+  int _remainingSteps = 0;         // pas restants estimés
+  int _distanceToNextM = 0;        // mètres avant le prochain virage
+
+  // Polylines : tracé futur (vert) + tracé passé (gris)
+  Line? _futureRouteLine;
+  Line? _passedRouteLine;
+  int _lastPassedIndex = 0;        // dernier point passé dans _routeCoords
+
+  // Profil utilisateur courant (pour calculer les pas)
+  final UserProfile _userProfile = UserProfile();
+
   final List<WaypointModel> _waypoints = [];
   final Map<String, Circle> _waypointCircles = {};
 
@@ -91,10 +110,28 @@ class _HomePageState extends State<HomePage> {
   @override
   void initState() {
     super.initState();
+    NavigationNotificationService.initialize();
     _determinePosition();
   }
 
   Future<void> _determinePosition() async {
+    // ─── DEBUG : position forcée ───────────────────────────────────────────
+    if (_kDebugLocation != null) {
+      final fakeLat = _kDebugLocation!['lat']!;
+      final fakeLon = _kDebugLocation!['lon']!;
+      setState(() {
+        _currentPosition = Position(
+          latitude: fakeLat, longitude: fakeLon,
+          timestamp: DateTime.now(), accuracy: 1,
+          altitude: 0, heading: 0, speed: 0,
+          speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0,
+        );
+        _locationError = false;
+      });
+      _animateCameraToPoint(fakeLat, fakeLon);
+      return;
+    }
+    // ─── GPS réel ─────────────────────────────────────────────────────────
     if (!await Geolocator.isLocationServiceEnabled()) {
       setState(() => _locationError = true);
       return;
@@ -185,20 +222,42 @@ class _HomePageState extends State<HomePage> {
     if (circle != null) await _mapController?.removeCircle(circle);
   }
 
-  void _drawRoute(Map<String, dynamic> geojson) async {
-    if (_mapController == null) return;
+  /// Dessine le tracé complet (vert). Appelé une seule fois à la génération.
+  Future<void> _drawRoute(Map<String, dynamic> geojson) async {
+    if (_mapController == null || _routeCoords.isEmpty) return;
     await _mapController!.clearLines();
-    final coords = (geojson['geometry']['coordinates'] as List)
-        .map((c) => LatLng(c[1] as double, c[0] as double))
-        .toList();
-    if (_routeCoords.isEmpty) return;
-    await _mapController!.addLine(LineOptions(
+    _futureRouteLine = await _mapController!.addLine(LineOptions(
       geometry: _routeCoords,
       lineColor: '#4CAF50',
       lineWidth: 6.0,
       lineOpacity: 0.85,
     ));
+    _passedRouteLine = null;
+    _lastPassedIndex = 0;
     _frameRoute();
+  }
+
+  /// Met à jour les deux polylines selon la position courante.
+  Future<void> _updateRouteSegments(int closestIndex) async {
+    if (_mapController == null || _routeCoords.isEmpty) return;
+    if (closestIndex <= _lastPassedIndex && _lastPassedIndex > 0) return;
+    _lastPassedIndex = closestIndex;
+
+    final passed = _routeCoords.sublist(0, closestIndex + 1);
+    final future = _routeCoords.sublist(closestIndex);
+
+    if (passed.length >= 2) {
+      if (_passedRouteLine == null) {
+        _passedRouteLine = await _mapController!.addLine(LineOptions(
+          geometry: passed, lineColor: '#9E9E9E', lineWidth: 6.0, lineOpacity: 0.7,
+        ));
+      } else {
+        await _mapController!.updateLine(_passedRouteLine!, LineOptions(geometry: passed));
+      }
+    }
+    if (future.length >= 2 && _futureRouteLine != null) {
+      await _mapController!.updateLine(_futureRouteLine!, LineOptions(geometry: future));
+    }
   }
 
   void _frameRoute() {
@@ -232,10 +291,16 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _startNavigation() {
+    NavigationNotificationService.requestPermission();
     setState(() {
       _isNavigating = true;
       _isPanelCollapsed = true;
       _trackingMode = MyLocationTrackingMode.trackingCompass;
+      _currentManeuverIndex = 0;
+      _remainingDistanceM = _routeDistanceM;
+      _remainingTimeS = _routeTimeS;
+      _remainingSteps = _stepsFromDistance(_remainingDistanceM);
+      _lastPassedIndex = 0;
     });
 
     if (_currentPosition != null) {
@@ -243,22 +308,86 @@ class _HomePageState extends State<HomePage> {
         CameraUpdate.newCameraPosition(
           CameraPosition(
             target: LatLng(_currentPosition!.latitude, _currentPosition!.longitude),
-            zoom: 19.5,
-            tilt: 60.0,
+            zoom: 19.5, tilt: 60.0,
           ),
         ),
       );
     }
 
-    // Lance le suivi en arrière-plan pour le hors-piste
     _positionStream = Geolocator.getPositionStream(
       locationSettings: const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 5),
     ).listen((Position pos) {
       if (mounted) {
         setState(() => _currentPosition = pos);
         _checkOffRoute(pos);
+        _updateNavigationState(pos);
       }
     });
+  }
+
+  /// Calcule le nombre de pas depuis une distance en mètres.
+  int _stepsFromDistance(double distM) =>
+      (distM / _userProfile.stepLengthM).round();
+
+  /// Met à jour l'ETA, les pas restants, la manœuvre suivante et les notifications.
+  void _updateNavigationState(Position pos) {
+    if (_routeCoords.isEmpty || _maneuvers.isEmpty) return;
+
+    // Trouve le point le plus proche sur le tracé
+    int closestIndex = 0;
+    double minDist = double.infinity;
+    for (int i = 0; i < _routeCoords.length; i++) {
+      final d = Geolocator.distanceBetween(
+        pos.latitude, pos.longitude,
+        _routeCoords[i].latitude, _routeCoords[i].longitude,
+      );
+      if (d < minDist) { minDist = d; closestIndex = i; }
+    }
+
+    // Distance restante = somme des segments depuis closestIndex
+    double remDist = 0;
+    for (int i = closestIndex; i < _routeCoords.length - 1; i++) {
+      remDist += Geolocator.distanceBetween(
+        _routeCoords[i].latitude, _routeCoords[i].longitude,
+        _routeCoords[i + 1].latitude, _routeCoords[i + 1].longitude,
+      );
+    }
+
+    // Prochaine manœuvre — on avance l'index quand on dépasse son point de déclenchement
+    int manIdx = _currentManeuverIndex;
+    if (manIdx < _maneuvers.length - 1) {
+      final nextDist = (_maneuvers[manIdx]['length_m'] as num?)?.toDouble() ?? 0;
+      if (remDist < _remainingDistanceM - nextDist + 20) {
+        manIdx = (manIdx + 1).clamp(0, _maneuvers.length - 1);
+      }
+    }
+
+    // Distance avant le prochain virage = distance cumulée jusqu'à la manœuvre suivante
+    final distToNext = (_maneuvers[manIdx]['length_m'] as num?)?.toInt() ?? 0;
+    final nextInstruction = (_maneuvers[manIdx]['instruction'] as String?) ?? '';
+    final remTimeS = _routeTimeS > 0
+        ? (remDist / _routeDistanceM * _routeTimeS).round()
+        : 0;
+
+    setState(() {
+      _currentManeuverIndex = manIdx;
+      _remainingDistanceM = remDist;
+      _remainingTimeS = remTimeS;
+      _remainingSteps = _stepsFromDistance(remDist);
+      _distanceToNextM = distToNext;
+    });
+
+    // Mise à jour polylines (asynchrone, pas de setState)
+    _updateRouteSegments(closestIndex);
+
+    // Notification système
+    NavigationNotificationService.showNavigationNotification(
+      nextManeuver: nextInstruction,
+      distanceToNextM: distToNext,
+      remainingKm: remDist / 1000,
+      etaMinutes: remTimeS ~/ 60,
+      remainingSteps: _remainingSteps,
+    );
   }
 
   void _checkOffRoute(Position pos) {
@@ -293,6 +422,9 @@ class _HomePageState extends State<HomePage> {
     });
     _positionStream?.cancel();
     _isOffRoute = false;
+    NavigationNotificationService.cancelNavigationNotification();
+    // Remet le tracé complet en vert
+    _drawRoute({'geometry': {'type': 'LineString', 'coordinates': _routeCoords.map((p) => [p.longitude, p.latitude]).toList()}});
     _frameRoute();
   }
 
@@ -349,7 +481,10 @@ class _HomePageState extends State<HomePage> {
       _maneuvers = (data['maneuvers'] as List<dynamic>?) ?? [];
     });
     final km = (_routeDistanceM / 1000).toStringAsFixed(2);
-    _showNotification('Itinéraire généré : $km km', color: Colors.green);
+    final steps = _stepsFromDistance(_routeDistanceM);
+    final mins = _routeTimeS ~/ 60;
+    final timeStr = mins < 60 ? '$mins min' : '${mins ~/ 60}h${(mins % 60).toString().padLeft(2,'0')}';
+    _showNotification('$km km · ~$steps pas · $timeStr', color: Colors.green, duration: 5);
   }
 
   void _showNotification(String msg, {Color color = Colors.red, int duration = 3}) {
@@ -389,6 +524,35 @@ class _HomePageState extends State<HomePage> {
         waypoints: _waypoints,
       ),
     );
+  }
+
+  /// Icône de manœuvre selon l'index courant dans _maneuvers.
+  IconData _maneuverIconData(int idx) {
+    if (_maneuvers.isEmpty || idx >= _maneuvers.length) return Icons.navigation;
+    final type = (_maneuvers[idx]['type'] as num?)?.toInt() ?? 0;
+    return switch (type) {
+      1 || 2 || 3 => Icons.play_arrow,
+      4 || 5 || 6 => Icons.flag,
+      8 => Icons.straight,
+      9 => Icons.turn_slight_right,
+      10 => Icons.turn_right,
+      11 => Icons.turn_sharp_right,
+      12 || 13 => Icons.u_turn_right,
+      14 => Icons.turn_sharp_left,
+      15 => Icons.turn_left,
+      16 => Icons.turn_slight_left,
+      _ => Icons.navigation,
+    };
+  }
+
+  /// Widget stat dans la barre ETA navigation.
+  Widget _navStat(IconData icon, Color color, String value, String label) {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, color: color, size: 20),
+      const SizedBox(height: 2),
+      Text(value, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 16)),
+      Text(label, style: const TextStyle(color: Colors.white54, fontSize: 10)),
+    ]);
   }
 
   @override
@@ -533,12 +697,87 @@ class _HomePageState extends State<HomePage> {
                   onShowSteps: _showDirectionsPanel,
                   routeDistanceM: _routeDistanceM,
                   routeTimeS: _routeTimeS,
+                  userProfile: _userProfile,
                 ),
               ),
             ),
 
-          // ── 5. Bouton Quitter Navigation ───────────────────────────────
-          if (_isNavigating)
+          // ── 5. HUD Navigation (ETA + prochain virage) ─────────────────
+          if (_isNavigating) ...[
+            // Carte du prochain virage (haut de l'écran)
+            if (_maneuvers.isNotEmpty)
+              Positioned(
+                top: 12, left: 12, right: 12,
+                child: Material(
+                  borderRadius: BorderRadius.circular(16),
+                  color: Colors.black.withOpacity(0.82),
+                  elevation: 8,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      Row(children: [
+                        Icon(
+                          _maneuverIconData(_currentManeuverIndex),
+                          color: Colors.white, size: 32,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(
+                              _distanceToNextM >= 1000
+                                  ? 'Dans ${(_distanceToNextM / 1000).toStringAsFixed(1)} km'
+                                  : 'Dans $_distanceToNextM m',
+                              style: const TextStyle(color: Colors.white70, fontSize: 12),
+                            ),
+                            Text(
+                              (_maneuvers[_currentManeuverIndex]['instruction'] as String?) ?? '',
+                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                              maxLines: 2, overflow: TextOverflow.ellipsis,
+                            ),
+                          ]),
+                        ),
+                      ]),
+                    ]),
+                  ),
+                ),
+              ),
+
+            // Barre ETA en bas
+            Positioned(
+              bottom: 110, left: 16, right: 16,
+              child: Material(
+                borderRadius: BorderRadius.circular(16),
+                color: Colors.black.withOpacity(0.82),
+                elevation: 8,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                    children: [
+                      _navStat(
+                        Icons.timer_outlined, Colors.greenAccent,
+                        _remainingTimeS < 3600
+                            ? '${_remainingTimeS ~/ 60} min'
+                            : '${_remainingTimeS ~/ 3600}h${((_remainingTimeS % 3600) ~/ 60).toString().padLeft(2,'0')}',
+                        'ETA',
+                      ),
+                      _navStat(
+                        Icons.straighten, Colors.cyanAccent,
+                        '${(_remainingDistanceM / 1000).toStringAsFixed(2)} km',
+                        'Restant',
+                      ),
+                      _navStat(
+                        Icons.directions_walk, Colors.orangeAccent,
+                        '~$_remainingSteps',
+                        'Pas',
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Bouton arrêter
             Positioned(
               bottom: 40, left: 0, right: 0,
               child: Center(
@@ -547,10 +786,11 @@ class _HomePageState extends State<HomePage> {
                   backgroundColor: Colors.red[600],
                   elevation: 8,
                   icon: const Icon(Icons.stop_circle, color: Colors.white),
-                  label: const Text('Arrêter la navigation', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                  label: const Text('Arrêter', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 ),
               ),
             ),
+          ],
 
           // ── 6. Bouton Historique Notifications (Haut Droite) ───────────
           Positioned(

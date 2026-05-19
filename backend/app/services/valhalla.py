@@ -25,7 +25,8 @@ def _build_costing_options(preferences: RoutePreferences) -> dict:
     Voir : https://valhalla.github.io/valhalla/api/turn-by-turn/api-reference/#pedestrian-costing-options
     """
     options: dict = {
-        "use_ferry": 0.0,
+        "use_ferry": 0.0,       # Jamais de ferry
+        "use_waterways": 0.0,   # Jamais de chemins sur l'eau
         "use_living_streets": 0.5,
         "use_tracks": 0.5,
     }

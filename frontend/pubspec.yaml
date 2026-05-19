@@ -16,6 +16,7 @@ dependencies:
   url_launcher: ^6.2.0 # Pour ouvrir Google Maps / Apple Maps
   share_plus: ^12.0.2
   path_provider: ^2.1.5
+  flutter_local_notifications: ^18.0.0
 
 dev_dependencies:
   flutter_test:

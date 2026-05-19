@@ -26,6 +26,7 @@ class ControlPanel extends StatefulWidget {
   final int routeTimeS;
   final bool isCollapsed;
   final VoidCallback? onToggleCollapse;
+  final UserProfile? userProfile; // Pour calculer les pas estimés
 
   const ControlPanel({
     super.key,
@@ -46,6 +47,7 @@ class ControlPanel extends StatefulWidget {
     this.routeTimeS = 0,
     this.isCollapsed = false,
     this.onToggleCollapse,
+    this.userProfile,
   });
 
   @override
@@ -388,30 +390,40 @@ class _ControlPanelState extends State<ControlPanel> {
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(color: Colors.green.shade200),
                 ),
-                child: Row(children: [
-                  const Icon(Icons.directions_walk, size: 18, color: Colors.green),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${(widget.routeDistanceM / 1000).toStringAsFixed(2)} km',
-                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                  ),
-                  const SizedBox(width: 12),
-                  const Icon(Icons.timer_outlined, size: 16, color: Colors.green),
-                  const SizedBox(width: 4),
-                  Text(
-                    _formatDuration(widget.routeTimeS),
-                    style: const TextStyle(fontSize: 13),
-                  ),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: widget.onShowSteps,
-                    icon: const Icon(Icons.list_alt, size: 14),
-                    label: const Text('Étapes', style: TextStyle(fontSize: 12)),
-                    style: TextButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    const Icon(Icons.directions_walk, size: 18, color: Colors.green),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${(widget.routeDistanceM / 1000).toStringAsFixed(2)} km',
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                     ),
-                  ),
+                    const SizedBox(width: 12),
+                    const Icon(Icons.timer_outlined, size: 16, color: Colors.green),
+                    const SizedBox(width: 4),
+                    Text(_formatDuration(widget.routeTimeS), style: const TextStyle(fontSize: 13)),
+                    const Spacer(),
+                    TextButton.icon(
+                      onPressed: widget.onShowSteps,
+                      icon: const Icon(Icons.list_alt, size: 14),
+                      label: const Text('Étapes', style: TextStyle(fontSize: 12)),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ),
+                  ]),
+                  if (widget.routeDistanceM > 0) ...[
+                    const SizedBox(height: 4),
+                    Row(children: [
+                      Icon(Icons.directions_walk, size: 14, color: Colors.green),
+                      const SizedBox(width: 6),
+                      Text(
+                        '~${((widget.routeDistanceM) / (widget.userProfile?.stepLengthM ?? _profile.stepLengthM)).round()} pas estimés',
+                        style: TextStyle(fontSize: 12, color: Colors.green.shade700),
+                      ),
+                    ]),
+                  ],
                 ]),
               ),
               const SizedBox(height: 10),
