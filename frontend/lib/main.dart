@@ -147,13 +147,20 @@ class _HomePageState extends State<HomePage> {
     Future.delayed(const Duration(milliseconds: 400), () {
       if (!mounted || _mapController == null) return;
       try {
+        final screenHeight = MediaQuery.of(context).size.height;
+        // On s'assure que le bottom padding ne dépasse jamais 50% de l'écran 
+        // pour ne pas écraser la zone de rendu MapLibre (surtout sur iPhone).
+        final safeBottomInset = _panelBottomInset > (screenHeight * 0.5) 
+            ? (screenHeight * 0.5) 
+            : _panelBottomInset;
+
         _mapController!.animateCamera(
           CameraUpdate.newLatLngBounds(
             LatLngBounds(
               southwest: LatLng(lat - eps, lon - eps),
               northeast: LatLng(lat + eps, lon + eps),
             ),
-            left: 0, top: 0, right: 0, bottom: _panelBottomInset,
+            left: 0, top: 0, right: 0, bottom: safeBottomInset,
           ),
         );
       } catch (e) {
@@ -761,8 +768,12 @@ class _HomePageState extends State<HomePage> {
           if (!_isNavigating)
             Positioned(
               bottom: 20, left: 16, right: 16,
-              child: SingleChildScrollView(
-                child: ControlPanel(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.45, // Max 45% de l'écran sur iPhone
+                ),
+                child: SingleChildScrollView(
+                  child: ControlPanel(
                   key: _panelKey,
                   currentPosition: _currentPosition,
                   isLoading: _isLoading,
@@ -785,6 +796,7 @@ class _HomePageState extends State<HomePage> {
                   userProfile: _userProfile,
                 ),
               ),
+             ),
             ),
 
           // ── 5. HUD Navigation (ETA + prochain virage) ─────────────────
