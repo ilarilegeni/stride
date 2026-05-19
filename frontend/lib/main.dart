@@ -777,7 +777,7 @@ class _HomePageState extends State<HomePage> {
             // Carte du prochain virage (haut de l'écran)
             if (_maneuvers.isNotEmpty)
               Positioned(
-                top: 12, left: 12, right: 12,
+                top: safeTop + 12, left: 12, right: 12,
                 child: Material(
                   borderRadius: BorderRadius.circular(16),
                   color: Colors.black.withOpacity(0.82),
@@ -868,18 +868,6 @@ class _HomePageState extends State<HomePage> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Bouton Historique Notifications
-                FloatingActionButton.small(
-                  heroTag: 'notif_history_fab',
-                  backgroundColor: Colors.white,
-                  elevation: 4,
-                  onPressed: () => setState(() => _showNotificationsHistory = !_showNotificationsHistory),
-                  child: Icon(
-                    _showNotificationsHistory ? Icons.close : Icons.notifications,
-                    color: _notificationsList.isEmpty ? Colors.grey[400] : Colors.blueAccent,
-                  ),
-                ),
-                const SizedBox(height: 8),
                 // Bouton Balades Sauvegardées
                 FloatingActionButton.small(
                   heroTag: 'saved_routes_fab',
@@ -895,6 +883,18 @@ class _HomePageState extends State<HomePage> {
                     }
                   },
                   child: const Icon(Icons.favorite, color: Colors.pink),
+                ),
+                const SizedBox(height: 8),
+                // Bouton Historique Notifications
+                FloatingActionButton.small(
+                  heroTag: 'notif_history_fab',
+                  backgroundColor: Colors.white,
+                  elevation: 4,
+                  onPressed: () => setState(() => _showNotificationsHistory = !_showNotificationsHistory),
+                  child: Icon(
+                    _showNotificationsHistory ? Icons.close : Icons.notifications,
+                    color: _notificationsList.isEmpty ? Colors.grey[400] : Colors.blueAccent,
+                  ),
                 ),
               ],
             ),
