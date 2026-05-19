@@ -139,27 +139,26 @@ class _HomePageState extends State<HomePage> {
   /// point vers le haut, donc le marqueur GPS reste visible au-dessus
   /// du ControlPanel (remplacement de contentInsets, absent en v0.26.0).
   void _animateCameraToPoint(double lat, double lon) {
+    const double eps = 0.001; 
     Future.delayed(const Duration(milliseconds: 400), () {
       if (!mounted || _mapController == null) return;
       try {
-        // Au lieu d'utiliser le bottom padding qui bug sur iOS (domain_error ou décentrage),
-        // On décale mathématiquement la latitude ciblée vers le Sud pour que le vrai point
-        // remonte visuellement au-dessus du panneau.
-        // À zoom 14, un décalage de ~0.00008 degré équivaut à 1 pixel.
-        // On veut décaler le centre de la moitié de la hauteur du panneau.
-        final pixelOffset = _panelBottomInset / 2;
-        final latOffset = pixelOffset * 0.000085;
-        
-        // On limite tout de même le décalage pour ne pas se retrouver hors-champ.
-        final safeLatOffset = latOffset.clamp(0.0, 0.03);
+        final screenHeight = MediaQuery.of(context).size.height;
+        // La méthode native de MapLibre (padding bottom) calcule dynamiquement le centre parfait.
+        // On s'assure juste que le bottom padding ne dépasse jamais 50% de l'écran 
+        // pour ne pas écraser la zone de rendu MapLibre (ce qui causait les crashs iOS).
+        final safeBottomInset = _panelBottomInset > (screenHeight * 0.5) 
+            ? (screenHeight * 0.5) 
+            : _panelBottomInset;
 
         _mapController!.animateCamera(
-          CameraUpdate.newCameraPosition(
-            CameraPosition(
-              target: LatLng(lat - safeLatOffset, lon),
-              zoom: 14.0, // Zoom idéal pour un départ
-            )
-          )
+          CameraUpdate.newLatLngBounds(
+            LatLngBounds(
+              southwest: LatLng(lat - eps, lon - eps),
+              northeast: LatLng(lat + eps, lon + eps),
+            ),
+            left: 0, top: 0, right: 0, bottom: safeBottomInset,
+          ),
         );
       } catch (e) {
         debugPrint("Erreur animateCamera: $e");
@@ -610,27 +609,10 @@ class _HomePageState extends State<HomePage> {
 
   @override
   Widget build(BuildContext context) {
+    final double safeTop = MediaQuery.of(context).padding.top;
+    
     return Scaffold(
       resizeToAvoidBottomInset: false,
-      appBar: AppBar(
-        title: const Text('Stride'),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.favorite),
-            tooltip: 'Balades sauvegardées',
-            onPressed: () async {
-              final result = await Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => const SavedRoutesPage()),
-              );
-              if (result != null && result is SavedRoute) {
-                _loadSavedRoute(result);
-              }
-            },
-          )
-        ],
-      ),
       body: Stack(
         children: [
           // ── 0. Carte MapLibre (fond) ──────────────────────────────────
@@ -653,7 +635,7 @@ class _HomePageState extends State<HomePage> {
           // Plus besoin d'un GestureDetector overlay grâce à onMapClick.
           if (_isAddingWaypointMode || _isSettingDebugLocationMode || _isReverseGeocoding)
             Positioned(
-              top: _locationError ? 70 : 12, left: 16, right: 72,
+              top: _locationError ? safeTop + 70 : safeTop + 12, left: 16, right: 72,
               child: Material(
                 borderRadius: BorderRadius.circular(12),
                 color: _isSettingDebugLocationMode ? Colors.blue.shade50 : Colors.orange.shade50,
@@ -682,7 +664,7 @@ class _HomePageState extends State<HomePage> {
           // ── 2. Bannière erreur GPS ────────────────────────────────────
           if (_locationError)
             Positioned(
-              top: 12, left: 16, right: 16,
+              top: safeTop + 12, left: 16, right: 16,
               child: Material(
                 borderRadius: BorderRadius.circular(12),
                 color: Colors.white,
@@ -729,7 +711,7 @@ class _HomePageState extends State<HomePage> {
 
           // ── 3. FAB waypoint ──────────────────────────────────────────
           Positioned(
-            top: 12, left: 12,
+            top: safeTop + 12, left: 12,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -880,25 +862,48 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
 
-          // ── 6. Bouton Historique Notifications (Haut Droite) ───────────
+          // ── 6. Boutons Actions Supérieures (Haut Droite) ───────────────
           Positioned(
-            top: 70, right: 16,
-            child: FloatingActionButton.small(
-              heroTag: 'notif_history_fab',
-              backgroundColor: Colors.white,
-              elevation: 4,
-              onPressed: () => setState(() => _showNotificationsHistory = !_showNotificationsHistory),
-              child: Icon(
-                _showNotificationsHistory ? Icons.close : Icons.notifications,
-                color: _notificationsList.isEmpty ? Colors.grey[400] : Colors.blueAccent,
-              ),
+            top: safeTop + 70, right: 16,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                // Bouton Historique Notifications
+                FloatingActionButton.small(
+                  heroTag: 'notif_history_fab',
+                  backgroundColor: Colors.white,
+                  elevation: 4,
+                  onPressed: () => setState(() => _showNotificationsHistory = !_showNotificationsHistory),
+                  child: Icon(
+                    _showNotificationsHistory ? Icons.close : Icons.notifications,
+                    color: _notificationsList.isEmpty ? Colors.grey[400] : Colors.blueAccent,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Bouton Balades Sauvegardées
+                FloatingActionButton.small(
+                  heroTag: 'saved_routes_fab',
+                  backgroundColor: Colors.white,
+                  elevation: 4,
+                  onPressed: () async {
+                    final result = await Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const SavedRoutesPage()),
+                    );
+                    if (result != null && result is SavedRoute) {
+                      _loadSavedRoute(result);
+                    }
+                  },
+                  child: const Icon(Icons.favorite, color: Colors.pink),
+                ),
+              ],
             ),
           ),
 
           // ── 7. Panneau Historique Notifications ─────────────────────────
           if (_showNotificationsHistory)
             Positioned(
-              top: 120, right: 16, bottom: 200,
+              top: safeTop + 120, right: 16, bottom: 200,
               width: 280,
               child: Material(
                 elevation: 8,
