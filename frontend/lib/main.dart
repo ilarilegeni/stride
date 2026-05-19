@@ -628,6 +628,8 @@ class _HomePageState extends State<HomePage> {
               myLocationEnabled: true,
               myLocationTrackingMode: _trackingMode,
               compassEnabled: true,
+              compassViewPosition: CompassViewPosition.topRight,
+              compassViewMargins: Point(16, safeTop + 160),
             ),
           ),
 
@@ -784,30 +786,41 @@ class _HomePageState extends State<HomePage> {
                   elevation: 8,
                   child: Padding(
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Row(children: [
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        // Icône à gauche (loin de la Dynamic Island)
                         Icon(
                           _maneuverIconData(_currentManeuverIndex),
-                          color: Colors.white, size: 32,
+                          color: Colors.white, size: 40,
                         ),
-                        const SizedBox(width: 12),
+                        // Espace vide au milieu (pour la Dynamic Island)
+                        const Spacer(),
+                        // Textes à droite (loin de la Dynamic Island)
                         Expanded(
-                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                            Text(
-                              _distanceToNextM >= 1000
-                                  ? 'Dans ${(_distanceToNextM / 1000).toStringAsFixed(1)} km'
-                                  : 'Dans $_distanceToNextM m',
-                              style: const TextStyle(color: Colors.white70, fontSize: 12),
-                            ),
-                            Text(
-                              (_maneuvers[_currentManeuverIndex]['instruction'] as String?) ?? '',
-                              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
-                              maxLines: 2, overflow: TextOverflow.ellipsis,
-                            ),
-                          ]),
+                          flex: 2,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                _distanceToNextM >= 1000
+                                    ? 'Dans ${(_distanceToNextM / 1000).toStringAsFixed(1)} km'
+                                    : 'Dans $_distanceToNextM m',
+                                style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                textAlign: TextAlign.right,
+                              ),
+                              Text(
+                                (_maneuvers[_currentManeuverIndex]['instruction'] as String?) ?? '',
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
+                                maxLines: 2, overflow: TextOverflow.ellipsis,
+                                textAlign: TextAlign.right,
+                              ),
+                            ],
+                          ),
                         ),
-                      ]),
-                    ]),
+                      ],
+                    ),
                   ),
                 ),
               ),
