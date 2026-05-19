@@ -139,29 +139,27 @@ class _HomePageState extends State<HomePage> {
   /// point vers le haut, donc le marqueur GPS reste visible au-dessus
   /// du ControlPanel (remplacement de contentInsets, absent en v0.26.0).
   void _animateCameraToPoint(double lat, double lon) {
-    const double eps = 0.001; // ~110 m — assez petit pour rester à zoom ~14
-    
-    // BUG FIX: On attend 400ms pour s'assurer que le rendu iOS de la carte a bien une hauteur > 0.
-    // Sinon, appliquer un 'bottom padding' de 360px sur une hauteur de 0px génère une erreur mathématique
-    // dans le moteur C++ (std::domain_error) car la zone d'affichage devient négative.
     Future.delayed(const Duration(milliseconds: 400), () {
       if (!mounted || _mapController == null) return;
       try {
-        final screenHeight = MediaQuery.of(context).size.height;
-        // On s'assure que le bottom padding ne dépasse jamais 75% de l'écran 
-        // pour ne pas écraser la zone de rendu MapLibre, ce qui évite les erreurs de domaine.
-        final safeBottomInset = _panelBottomInset > (screenHeight * 0.75) 
-            ? (screenHeight * 0.75) 
-            : _panelBottomInset;
+        // Au lieu d'utiliser le bottom padding qui bug sur iOS (domain_error ou décentrage),
+        // On décale mathématiquement la latitude ciblée vers le Sud pour que le vrai point
+        // remonte visuellement au-dessus du panneau.
+        // À zoom 14, un décalage de ~0.00008 degré équivaut à 1 pixel.
+        // On veut décaler le centre de la moitié de la hauteur du panneau.
+        final pixelOffset = _panelBottomInset / 2;
+        final latOffset = pixelOffset * 0.000085;
+        
+        // On limite tout de même le décalage pour ne pas se retrouver hors-champ.
+        final safeLatOffset = latOffset.clamp(0.0, 0.03);
 
         _mapController!.animateCamera(
-          CameraUpdate.newLatLngBounds(
-            LatLngBounds(
-              southwest: LatLng(lat - eps, lon - eps),
-              northeast: LatLng(lat + eps, lon + eps),
-            ),
-            left: 0, top: 0, right: 0, bottom: safeBottomInset,
-          ),
+          CameraUpdate.newCameraPosition(
+            CameraPosition(
+              target: LatLng(lat - safeLatOffset, lon),
+              zoom: 14.0, // Zoom idéal pour un départ
+            )
+          )
         );
       } catch (e) {
         debugPrint("Erreur animateCamera: $e");
