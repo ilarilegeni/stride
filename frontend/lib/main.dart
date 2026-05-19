@@ -14,10 +14,9 @@ import 'widgets/control_panel.dart';
 import 'widgets/directions_panel.dart';
 import 'widgets/waypoint_search.dart';
 
-/// ─── DEBUG : Forcer une localisation initiale (null = utiliser le GPS réel) ───
-/// Pour débugger, décommente et modifie les coordonnées ci-dessous :
-// const _kDebugLocation = {'lat': 48.8566, 'lon': 2.3522}; // Paris
-const Map<String, double>? _kDebugLocation = null;
+/// ─── DEBUG : Forcer une localisation initiale ───
+/// Activable via : --dart-define=ENABLE_DEBUG_LOCATION=true
+const bool _enableDebugLocation = bool.fromEnvironment('ENABLE_DEBUG_LOCATION', defaultValue: false);
 
 class AppNotification {
   final String message;
@@ -92,6 +91,7 @@ class _HomePageState extends State<HomePage> {
   final Map<String, Circle> _waypointCircles = {};
 
   bool _isAddingWaypointMode = false;
+  bool _isSettingDebugLocationMode = false;
   bool _isReverseGeocoding = false;
 
   bool _isPanelCollapsed = false;
@@ -115,22 +115,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _determinePosition() async {
-    // ─── DEBUG : position forcée ───────────────────────────────────────────
-    if (_kDebugLocation != null) {
-      final fakeLat = _kDebugLocation!['lat']!;
-      final fakeLon = _kDebugLocation!['lon']!;
-      setState(() {
-        _currentPosition = Position(
-          latitude: fakeLat, longitude: fakeLon,
-          timestamp: DateTime.now(), accuracy: 1,
-          altitude: 0, heading: 0, speed: 0,
-          speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0,
-        );
-        _locationError = false;
-      });
-      _animateCameraToPoint(fakeLat, fakeLon);
-      return;
-    }
     // ─── GPS réel ─────────────────────────────────────────────────────────
     if (!await Geolocator.isLocationServiceEnabled()) {
       setState(() => _locationError = true);
@@ -187,6 +171,24 @@ class _HomePageState extends State<HomePage> {
   /// conversion pixel → LatLng côté Dart. Ça évite le problème de device
   /// pixel ratio qui décalait le point placé sur tablette Android.
   Future<void> _onMapClick(Point<double> point, LatLng latLng) async {
+    // Mode paramétrage de la localisation de debug
+    if (_isSettingDebugLocationMode) {
+      setState(() {
+        _isSettingDebugLocationMode = false;
+        _currentPosition = Position(
+          latitude: latLng.latitude,
+          longitude: latLng.longitude,
+          timestamp: DateTime.now(),
+          accuracy: 1, altitude: 0, heading: 0, speed: 0,
+          speedAccuracy: 0, altitudeAccuracy: 0, headingAccuracy: 0,
+        );
+        _locationError = false;
+      });
+      _animateCameraToPoint(latLng.latitude, latLng.longitude);
+      _showNotification("Localisation initiale de débugging définie !", color: Colors.blueAccent);
+      return;
+    }
+
     // N'agit que si le mode "ajout de waypoint" est actif
     if (!_isAddingWaypointMode || _isReverseGeocoding) return;
 
@@ -581,14 +583,14 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
 
-          // ── 1. Bannière mode ajout waypoint ──────────────────────────
+          // ── 1. Bannière mode ajout waypoint ou debug ──────────────────────────
           // Plus besoin d'un GestureDetector overlay grâce à onMapClick.
-          if (_isAddingWaypointMode || _isReverseGeocoding)
+          if (_isAddingWaypointMode || _isSettingDebugLocationMode || _isReverseGeocoding)
             Positioned(
               top: _locationError ? 70 : 12, left: 16, right: 72,
               child: Material(
                 borderRadius: BorderRadius.circular(12),
-                color: Colors.orange.shade50,
+                color: _isSettingDebugLocationMode ? Colors.blue.shade50 : Colors.orange.shade50,
                 elevation: 4,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -596,12 +598,14 @@ class _HomePageState extends State<HomePage> {
                     if (_isReverseGeocoding)
                       const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
                     else
-                      const Icon(Icons.touch_app, color: Colors.orange, size: 20),
+                      Icon(Icons.touch_app, color: _isSettingDebugLocationMode ? Colors.blue : Colors.orange, size: 20),
                     const SizedBox(width: 10),
                     Expanded(child: Text(
                       _isReverseGeocoding
                           ? 'Identification du lieu...'
-                          : 'Appuyez sur la carte pour placer un point',
+                          : _isSettingDebugLocationMode 
+                              ? 'Appuyez pour forcer la localisation'
+                              : 'Appuyez sur la carte pour placer un point',
                       style: const TextStyle(fontWeight: FontWeight.w500, fontSize: 13),
                     )),
                   ]),
@@ -660,16 +664,35 @@ class _HomePageState extends State<HomePage> {
           // ── 3. FAB waypoint ──────────────────────────────────────────
           Positioned(
             top: 12, left: 12,
-            child: FloatingActionButton.small(
-              heroTag: 'add_waypoint_fab',
-              tooltip: _isAddingWaypointMode ? 'Annuler' : 'Placer un point sur la carte',
-              backgroundColor: _isAddingWaypointMode ? Colors.orange : Colors.white,
-              elevation: 4,
-              onPressed: () => setState(() => _isAddingWaypointMode = !_isAddingWaypointMode),
-              child: Icon(
-                _isAddingWaypointMode ? Icons.close : Icons.add_location_alt,
-                color: _isAddingWaypointMode ? Colors.white : Colors.grey[700],
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                FloatingActionButton.small(
+                  heroTag: 'add_waypoint_fab',
+                  tooltip: _isAddingWaypointMode ? 'Annuler' : 'Placer un point sur la carte',
+                  backgroundColor: _isAddingWaypointMode ? Colors.orange : Colors.white,
+                  elevation: 4,
+                  onPressed: () => setState(() => _isAddingWaypointMode = !_isAddingWaypointMode),
+                  child: Icon(
+                    _isAddingWaypointMode ? Icons.close : Icons.add_location_alt,
+                    color: _isAddingWaypointMode ? Colors.white : Colors.grey[700],
+                  ),
+                ),
+                if (_enableDebugLocation) ...[
+                  const SizedBox(height: 8),
+                  FloatingActionButton.small(
+                    heroTag: 'set_debug_location_fab',
+                    tooltip: _isSettingDebugLocationMode ? 'Annuler debug loc' : 'Forcer loc de debug',
+                    backgroundColor: _isSettingDebugLocationMode ? Colors.blue : Colors.white,
+                    elevation: 4,
+                    onPressed: () => setState(() => _isSettingDebugLocationMode = !_isSettingDebugLocationMode),
+                    child: Icon(
+                      _isSettingDebugLocationMode ? Icons.close : Icons.gps_fixed,
+                      color: _isSettingDebugLocationMode ? Colors.white : Colors.blue,
+                    ),
+                  ),
+                ],
+              ],
             ),
           ),
 
