@@ -293,15 +293,20 @@ class _ControlPanelState extends State<ControlPanel> {
             WaypointSearch(onWaypointSelected: widget.onWaypointAdded),
             if (widget.waypoints.isNotEmpty) ...[
               const SizedBox(height: 6),
-              Wrap(
-                spacing: 6, runSpacing: 4,
-                children: widget.waypoints.map((wp) => Chip(
-                  label: Text(wp.name, style: const TextStyle(fontSize: 12)),
-                  deleteIcon: const Icon(Icons.close, size: 14),
-                  onDeleted: () => widget.onWaypointRemoved(wp.id),
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                )).toList(),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 90),
+                child: SingleChildScrollView(
+                  child: Wrap(
+                    spacing: 6, runSpacing: 4,
+                    children: widget.waypoints.map((wp) => Chip(
+                      label: Text(wp.name, style: const TextStyle(fontSize: 12)),
+                      deleteIcon: const Icon(Icons.close, size: 14),
+                      onDeleted: () => widget.onWaypointRemoved(wp.id),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                    )).toList(),
+                  ),
+                ),
               ),
             ],
 
@@ -436,30 +441,36 @@ class _ControlPanelState extends State<ControlPanel> {
             // "Départ" est grisé tant qu'aucun parcours n'a été généré.
             Row(children: [
               Expanded(
-                flex: 2,
+                flex: 1,
                 child: FilledButton.icon(
                   onPressed: widget.isLoading ? null : _generate,
                   icon: widget.isLoading
-                      ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : Icon(widget.hasRoute ? Icons.refresh : Icons.map, size: 18),
-                  label: Text(
-                    widget.isLoading ? 'Génération...' : (widget.hasRoute ? 'Regénérer' : 'Générer'),
-                    style: const TextStyle(fontSize: 13),
+                      ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : Icon(widget.hasRoute ? Icons.refresh : Icons.map, size: 16),
+                  label: FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      widget.isLoading ? 'Patienter' : (widget.hasRoute ? 'Regén.' : 'Générer'),
+                      style: const TextStyle(fontSize: 13),
+                    ),
                   ),
-                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14)),
+                  style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8)),
                 ),
               ),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               Expanded(
-                flex: 3,
+                flex: 1,
                 child: FilledButton.icon(
                   onPressed: widget.hasRoute ? widget.onShowDirections : null,
-                  icon: const Icon(Icons.navigation, size: 20),
-                  label: const Text('Départ', style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold)),
+                  icon: const Icon(Icons.navigation, size: 16),
+                  label: const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text('Départ', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
+                  ),
                   style: FilledButton.styleFrom(
                     backgroundColor: widget.hasRoute ? Colors.green[700] : Colors.grey[400],
                     disabledBackgroundColor: Colors.grey[300],
-                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 8),
                   ),
                 ),
               ),

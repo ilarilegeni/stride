@@ -148,10 +148,10 @@ class _HomePageState extends State<HomePage> {
       if (!mounted || _mapController == null) return;
       try {
         final screenHeight = MediaQuery.of(context).size.height;
-        // On s'assure que le bottom padding ne dépasse jamais 50% de l'écran 
-        // pour ne pas écraser la zone de rendu MapLibre (surtout sur iPhone).
-        final safeBottomInset = _panelBottomInset > (screenHeight * 0.5) 
-            ? (screenHeight * 0.5) 
+        // On s'assure que le bottom padding ne dépasse jamais 75% de l'écran 
+        // pour ne pas écraser la zone de rendu MapLibre, ce qui évite les erreurs de domaine.
+        final safeBottomInset = _panelBottomInset > (screenHeight * 0.75) 
+            ? (screenHeight * 0.75) 
             : _panelBottomInset;
 
         _mapController!.animateCamera(
@@ -768,35 +768,28 @@ class _HomePageState extends State<HomePage> {
           if (!_isNavigating)
             Positioned(
               bottom: 20, left: 16, right: 16,
-              child: ConstrainedBox(
-                constraints: BoxConstraints(
-                  maxHeight: MediaQuery.of(context).size.height * 0.45, // Max 45% de l'écran sur iPhone
-                ),
-                child: SingleChildScrollView(
-                  child: ControlPanel(
-                  key: _panelKey,
-                  currentPosition: _currentPosition,
-                  isLoading: _isLoading,
-                  waypoints: _waypoints,
-                  onWaypointAdded: _addWaypoint,
-                  onWaypointRemoved: _removeWaypoint,
-                  onRouteGenerated: _onRouteGenerated,
-                  onError: (msg) => _showNotification(msg),
-                  onLoadingStart: () => setState(() => _isLoading = true),
-                  onLoadingEnd: () => setState(() => _isLoading = false),
-                  hasRoute: _maneuvers.isNotEmpty,
-                  isCollapsed: _isPanelCollapsed,
-                  onToggleCollapse: _togglePanelCollapse,
-                  onShowDirections: _startNavigation,
-                  onExportGpx: _exportGpx,
-                  onShowSteps: _showDirectionsPanel,
-                  onSaveRoute: _saveRoute,
-                  routeDistanceM: _routeDistanceM,
-                  routeTimeS: _routeTimeS,
-                  userProfile: _userProfile,
-                ),
+              child: ControlPanel(
+                key: _panelKey,
+                currentPosition: _currentPosition,
+                isLoading: _isLoading,
+                waypoints: _waypoints,
+                onWaypointAdded: _addWaypoint,
+                onWaypointRemoved: _removeWaypoint,
+                onRouteGenerated: _onRouteGenerated,
+                onError: (msg) => _showNotification(msg),
+                onLoadingStart: () => setState(() => _isLoading = true),
+                onLoadingEnd: () => setState(() => _isLoading = false),
+                hasRoute: _maneuvers.isNotEmpty,
+                isCollapsed: _isPanelCollapsed,
+                onToggleCollapse: _togglePanelCollapse,
+                onShowDirections: _startNavigation,
+                onExportGpx: _exportGpx,
+                onShowSteps: _showDirectionsPanel,
+                onSaveRoute: _saveRoute,
+                routeDistanceM: _routeDistanceM,
+                routeTimeS: _routeTimeS,
+                userProfile: _userProfile,
               ),
-             ),
             ),
 
           // ── 5. HUD Navigation (ETA + prochain virage) ─────────────────
@@ -891,7 +884,7 @@ class _HomePageState extends State<HomePage> {
 
           // ── 6. Bouton Historique Notifications (Haut Droite) ───────────
           Positioned(
-            top: 12, right: 16,
+            top: 70, right: 16,
             child: FloatingActionButton.small(
               heroTag: 'notif_history_fab',
               backgroundColor: Colors.white,
@@ -907,7 +900,7 @@ class _HomePageState extends State<HomePage> {
           // ── 7. Panneau Historique Notifications ─────────────────────────
           if (_showNotificationsHistory)
             Positioned(
-              top: 70, right: 16, bottom: 200,
+              top: 120, right: 16, bottom: 200,
               width: 280,
               child: Material(
                 elevation: 8,
