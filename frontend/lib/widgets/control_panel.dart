@@ -27,6 +27,7 @@ class ControlPanel extends StatefulWidget {
   final bool isCollapsed;
   final VoidCallback? onToggleCollapse;
   final UserProfile? userProfile; // Pour calculer les pas estimés
+  final VoidCallback? onSaveRoute; // Action pour sauvegarder la route
 
   const ControlPanel({
     super.key,
@@ -48,6 +49,7 @@ class ControlPanel extends StatefulWidget {
     this.isCollapsed = false,
     this.onToggleCollapse,
     this.userProfile,
+    this.onSaveRoute,
   });
 
   @override
@@ -462,7 +464,16 @@ class _ControlPanelState extends State<ControlPanel> {
                 ),
               ),
               const SizedBox(width: 8),
-              if (widget.hasRoute)
+              if (widget.hasRoute) ...[
+                Tooltip(
+                  message: 'Sauvegarder la balade',
+                  child: IconButton.filledTonal(
+                    onPressed: widget.onSaveRoute,
+                    icon: const Icon(Icons.favorite_border, color: Colors.pink),
+                    style: IconButton.styleFrom(padding: const EdgeInsets.all(14)),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Tooltip(
                   message: 'Exporter en GPX',
                   child: IconButton.filledTonal(
@@ -473,7 +484,14 @@ class _ControlPanelState extends State<ControlPanel> {
                     ),
                   ),
                 ),
-              if (!widget.hasRoute)
+              ],
+              if (!widget.hasRoute) ...[
+                IconButton.filledTonal(
+                  onPressed: null,
+                  icon: const Icon(Icons.favorite_border),
+                  style: IconButton.styleFrom(padding: const EdgeInsets.all(14), disabledBackgroundColor: Colors.grey[300]),
+                ),
+                const SizedBox(width: 8),
                 IconButton.filledTonal(
                   onPressed: null,
                   icon: const Icon(Icons.download),
@@ -482,6 +500,7 @@ class _ControlPanelState extends State<ControlPanel> {
                     disabledBackgroundColor: Colors.grey[300],
                   ),
                 ),
+              ],
             ]),
           ],
         ),

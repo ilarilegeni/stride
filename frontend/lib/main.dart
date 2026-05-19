@@ -8,11 +8,14 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import 'models/preferences.dart';
+import 'models/saved_route.dart';
 import 'services/geocoding_service.dart';
 import 'services/navigation_notification_service.dart';
+import 'services/storage_service.dart';
 import 'widgets/control_panel.dart';
 import 'widgets/directions_panel.dart';
 import 'widgets/waypoint_search.dart';
+import 'pages/saved_routes_page.dart';
 
 /// ─── DEBUG : Forcer une localisation initiale ───
 /// Activable via : --dart-define=ENABLE_DEBUG_LOCATION=true
@@ -458,6 +461,49 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _saveRoute() async {
+    if (_routeCoords.isEmpty) return;
+    String routeName = 'Balade du ${DateTime.now().day.toString().padLeft(2, '0')}/${DateTime.now().month.toString().padLeft(2, '0')} à ${DateTime.now().hour.toString().padLeft(2, '0')}h${DateTime.now().minute.toString().padLeft(2, '0')}';
+
+    final route = SavedRoute(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: routeName,
+      date: DateTime.now(),
+      distanceM: _routeDistanceM,
+      timeS: _routeTimeS,
+      coords: _routeCoords.map((c) => [c.latitude, c.longitude]).toList(),
+      maneuvers: _maneuvers,
+    );
+
+    await StorageService.saveRoute(route);
+    _showNotification('Balade sauvegardée !', color: Colors.pink);
+  }
+
+  void _loadSavedRoute(SavedRoute route) {
+    setState(() {
+      _routeDistanceM = route.distanceM;
+      _routeTimeS = route.timeS;
+      _routeCoords = route.coords.map((c) => LatLng(c[0], c[1])).toList();
+      _maneuvers = route.maneuvers;
+      _isPanelCollapsed = true;
+      _waypoints.clear();
+      for (final circle in _waypointCircles.values) {
+        _mapController?.removeCircle(circle);
+      }
+      _waypointCircles.clear();
+    });
+
+    final geojson = {
+      'geometry': {
+        'type': 'LineString',
+        'coordinates': route.coords.map((c) => [c[1], c[0]]).toList(),
+      }
+    };
+    _drawRoute(geojson);
+    final km = (_routeDistanceM / 1000).toStringAsFixed(2);
+    _showNotification('Balade chargée : $km km', color: Colors.green);
+  }
+
   void _onRouteGenerated(Map<String, dynamic> data) {
     if (data['status'] == 'downloading') {
       _showNotification(data['message'] as String, color: Colors.blueAccent, duration: 5);
@@ -564,6 +610,21 @@ class _HomePageState extends State<HomePage> {
       appBar: AppBar(
         title: const Text('Stride'),
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.favorite),
+            tooltip: 'Balades sauvegardées',
+            onPressed: () async {
+              final result = await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SavedRoutesPage()),
+              );
+              if (result != null && result is SavedRoute) {
+                _loadSavedRoute(result);
+              }
+            },
+          )
+        ],
       ),
       body: Stack(
         children: [
@@ -718,6 +779,7 @@ class _HomePageState extends State<HomePage> {
                   onShowDirections: _startNavigation,
                   onExportGpx: _exportGpx,
                   onShowSteps: _showDirectionsPanel,
+                  onSaveRoute: _saveRoute,
                   routeDistanceM: _routeDistanceM,
                   routeTimeS: _routeTimeS,
                   userProfile: _userProfile,
